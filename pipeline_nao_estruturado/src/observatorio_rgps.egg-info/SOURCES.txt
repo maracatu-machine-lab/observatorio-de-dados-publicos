@@ -1,0 +1,8 @@
+README.md
+pyproject.toml
+src/app.py
+src/observatorio_rgps.egg-info/PKG-INFO
+src/observatorio_rgps.egg-info/SOURCES.txt
+src/observatorio_rgps.egg-info/dependency_links.txt
+src/observatorio_rgps.egg-info/requires.txt
+src/observatorio_rgps.egg-info/top_level.txt

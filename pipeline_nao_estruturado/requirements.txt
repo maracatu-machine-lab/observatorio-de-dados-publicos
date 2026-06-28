@@ -1,0 +1,10 @@
+streamlit
+pandas
+docling
+langchain
+langchain-community
+
+
+docling
+sqlalchemy
+pymysql

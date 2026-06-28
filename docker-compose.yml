@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  # Serviço do Banco de Dados
+  db_observatorio:
+    image: mysql:8.0
+    container_name: mysql_observatorio
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: root_password_segura
+      MYSQL_DATABASE: observatorio_db
+      MYSQL_USER: user_observatorio
+      MYSQL_PASSWORD: password_observatorio
+    ports:
+      - "3306:3306"
+    volumes:
+      # Persistência dos dados no seu computador
+      - observatorio_data:/var/lib/mysql
+      # Mapeia os seus scripts SQL para inicialização automática
+      - ./database:/docker-entrypoint-initdb.d
+    networks:
+      - rede_observatorio
+
+networks:
+  rede_observatorio:
+    driver: bridge
+
+volumes:
+  observatorio_data:

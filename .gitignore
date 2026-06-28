@@ -1,0 +1,32 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+.env
+.pytest_cache/
+
+# --- Docker ---
+# Não enviamos o volume de dados real para o Git
+docker-data/
+
+# --- IDEs ---
+.vscode/
+.idea/
+.DS_Store
+
+# --- Dados e Modelos ---
+# Ignorar arquivos grandes de dados brutos e pesos de modelos
+data/
+*.csv
+*.xlsx
+*.pdf
+*.json
+pipeline_nao_estruturado/models/*.bin
+pipeline_nao_estruturado/models/*.pth
+pipeline_nao_estruturado/models/*.h5
+
+# --- Logs ---
+*.log

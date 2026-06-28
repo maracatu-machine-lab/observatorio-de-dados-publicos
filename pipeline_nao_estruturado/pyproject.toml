@@ -1,0 +1,14 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "observatorio_rgps"
+version = "0.1.0"
+dependencies = [
+    "streamlit",
+    "pandas",
+    "docling",
+    "langchain",
+    "langchain-community",
+]

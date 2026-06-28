@@ -1,0 +1,8 @@
+Metadata-Version: 2.4
+Name: observatorio_rgps
+Version: 0.1.0
+Requires-Dist: streamlit
+Requires-Dist: pandas
+Requires-Dist: docling
+Requires-Dist: langchain
+Requires-Dist: langchain-community
