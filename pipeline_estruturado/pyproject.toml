@@ -6,7 +6,8 @@ requires-python = ">=3.11"
 dependencies = [
     "requests>=2.32.0",
     "pandas>=2.2.0",
-    "pyarrow>=16.0.0"
+    "pyarrow>=16.0.0",
+    "orcamentobr==1.0.1"
 ]
 
 [project.scripts]
