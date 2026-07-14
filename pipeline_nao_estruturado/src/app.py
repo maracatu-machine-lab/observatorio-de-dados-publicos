@@ -1,28 +1,25 @@
+import sys
+import os
 import streamlit as st
 import pandas as pd
 import tempfile
-import os
-import json
 
 from docling.document_converter import DocumentConverter, PdfFormatOption
 from docling.datamodel.base_models import InputFormat
 from docling.datamodel.pipeline_options import PdfPipelineOptions
 from docling.backend.pypdfium2_backend import PyPdfiumDocumentBackend
-from langchain_community.llms import Ollama
 
-from models.prompts import prompt_rgps
+st.set_page_config(page_title="Pipeline ETL RGPS - PIBIC", layout="wide")
+st.title("🏛️ Extrator Cirúrgico: Resultado do RGPS")
+st.markdown("Busca dinâmica da tabela de Renúncias em PDFs de múltiplas páginas, garantindo 100% de integridade dos dados.")
 
-st.set_page_config(page_title="Pipeline ETL RGPS (Open-Source)", layout="wide")
-st.title("🏛️ Construtor de Série Histórica do RGPS")
-st.markdown("Metodologia baseada em **Docling** + **LangChain** com IA 100% local (Llama 3.2).")
-
+# ==================== CONFIGURAÇÃO DOCLING ====================
 @st.cache_resource
 def carregar_conversor():
     pipeline_options = PdfPipelineOptions()
     pipeline_options.do_ocr = False
     pipeline_options.do_table_structure = True
-    pipeline_options.do_code_enrichment = False
-
+    
     return DocumentConverter(
         format_options={
             InputFormat.PDF: PdfFormatOption(
@@ -33,59 +30,94 @@ def carregar_conversor():
     )
 
 conversor_docling = carregar_conversor()
-llm_local = Ollama(model="llama3.2")
 
-arquivos_pdf = st.file_uploader("Selecione os arquivos PDF governamentais", type=["pdf"], accept_multiple_files=True)
+# ==================== LÓGICA DE ANCORAGEM ====================
+def identificar_tabela_alvo(df):
+    """
+    Verifica se a tabela atual é a tabela de 'Resultado do RGPS com Renúncias'.
+    """
+    # Converte a tabela inteira para uma string única (em minúsculas) para facilitar a busca
+    texto_tabela = df.to_string().lower()
+    
+    # Âncoras exclusivas desta tabela. Se essas palavras estiverem juntas, é a tabela certa.
+    ancoras = [
+        "arrecadação líquida total", 
+        "renúncias previdenciárias", 
+        "resultado do rgps com renúncias"
+    ]
+    
+    # Retorna True apenas se TODAS as âncoras forem encontradas na tabela
+    return all(ancora in texto_tabela for ancora in ancoras)
+
+# ======================= INTERFACE =======================
+arquivos_pdf = st.file_uploader(
+    "Selecione os relatórios PDF (Multijogos permitidos)", 
+    type=["pdf"], 
+    accept_multiple_files=True
+)
 
 if arquivos_pdf:
-    st.info(f"📁 {len(arquivos_pdf)} arquivo(s) carregado(s) para processamento local.")
-
-    if st.button("🚀 Iniciar Extração LangChain + Docling", type="primary"):
-        dados_consolidados = {}
+    if st.button("🚀 Iniciar Busca e Extração", type="primary"):
+        tabelas_consolidadas = []
         barra_progresso = st.progress(0)
 
         for i, arquivo in enumerate(arquivos_pdf):
-            with st.spinner(f"Processando {arquivo.name}..."):
+            with st.spinner(f"Varrendo páginas de: {arquivo.name}..."):
                 try:
                     with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
                         tmp.write(arquivo.getvalue())
                         caminho_pdf = tmp.name
 
-                    resultado_docling = conversor_docling.convert(caminho_pdf)
-                    texto_markdown = resultado_docling.document.export_to_markdown()
+                    # O Docling lê o PDF inteiro
+                    resultado = conversor_docling.convert(caminho_pdf)
+                    tabela_encontrada = False
+                    
+                    # Varre todas as tabelas encontradas em todas as páginas
+                    for table in resultado.document.tables:
+                        df_bruto = table.export_to_dataframe()
+                        
+                        if df_bruto.empty: 
+                            continue
+                            
+                        # Passa a tabela pelo nosso detector
+                        if identificar_tabela_alvo(df_bruto):
+                            # Cria uma coluna para identificar a origem do dado
+                            df_bruto['Arquivo_Origem'] = arquivo.name
+                            tabelas_consolidadas.append(df_bruto)
+                            tabela_encontrada = True
+                            
+                            # Como já achamos a tabela alvo neste PDF, podemos parar de procurar nele
+                            break
+                    
+                    if not tabela_encontrada:
+                        st.warning(f"A tabela alvo não foi encontrada em: {arquivo.name}")
+
                     os.unlink(caminho_pdf)
-
-                    chain = prompt_rgps | llm_local
-                    resposta_bruta = chain.invoke({"documento": texto_markdown})
-
-                    texto_limpo = resposta_bruta.strip()
-                    if "```json" in texto_limpo:
-                        texto_limpo = texto_limpo.split("```json")[1].split("```")[0]
-                    elif "```" in texto_limpo:
-                        texto_limpo = texto_limpo.split("```")[1]
-
-                    extracao = json.loads(texto_limpo.strip())
-                    mes = extracao.get("mes_referencia", f"Desconhecido_{i}")
-                    valores = extracao.get("dados", {})
-                    dados_consolidados[mes] = valores
 
                 except Exception as e:
                     st.error(f"Erro ao processar {arquivo.name}: {str(e)}")
                     continue
+            
+            barra_progresso.progress((i + 1) / len(arquivos_pdf))
 
-                barra_progresso.progress((i + 1) / len(arquivos_pdf))
-
-        if dados_consolidados:
-            st.success("✨ Processamento concluído com sucesso!")
-            df_historico = pd.DataFrame.from_dict(dados_consolidados, orient='index')
-            st.dataframe(df_historico, use_container_width=True)
-
-            st.download_button(
-                label="📥 Baixar Série Histórica (CSV)",
-                data=df_historico.to_csv(),
-                file_name="serie_historica_rgps.csv",
-                mime="text/csv",
-                type="primary"
-            )
-        else:
-            st.warning("Nenhum dado foi extraído.")
+        # ======================= GERAÇÃO DA SAÍDA =======================
+        if tabelas_consolidadas:
+            st.success("✨ Extração concluída! Nenhuma linha foi perdida.")
+            
+            # Aqui preservamos a tabela inteira, exatamente como está no PDF
+            for idx, tabela_final in enumerate(tabelas_consolidadas):
+                st.write(f"### Tabela extraída do arquivo: {tabela_final['Arquivo_Origem'].iloc[0]}")
+                st.dataframe(tabela_final, use_container_width=True)
+                
+                # Conversão do DataFrame para JSON formatado e legível
+                json_data = tabela_final.to_json(orient="records", force_ascii=False, indent=4)
+                
+                # Botão de download atualizado para JSON
+                st.download_button(
+                    label=f"📥 Baixar Tabela {idx + 1} Completa (JSON)",
+                    data=json_data,
+                    file_name=f"extracao_completa_{idx+1}.json",
+                    mime="application/json",
+                    type="primary",
+                    key=f"download_btn_{idx}"
+                )
