@@ -1,3 +1,22 @@
+# Interface web de visualização
 streamlit>=1.30.0
+ 
+# Manipulação de dados
 pandas>=2.0.0
-docling>=1.0.0
+ 
+# Extração estrutural de tabelas em PDF
+docling>=2.15.0
+ 
+# ORM e conexão com o PostgreSQL (camadas Bronze/Prata)
+sqlalchemy>=2.0.0
+psycopg2-binary>=2.9.9
+ 
+# Leitura da variável DATABASE_URL a partir do arquivo .env
+python-dotenv>=1.0.0
+ 
+# Consultas SQL diretamente sobre os DataFrames (app.py)
+duckdb>=0.10.0
+ 
+# Download dos PDFs a partir das URLs em urls_alvo.txt
+requests>=2.31.0
+ 
