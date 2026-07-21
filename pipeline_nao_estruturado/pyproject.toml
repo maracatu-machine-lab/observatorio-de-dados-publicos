@@ -1,14 +1,21 @@
-[build-system]
+build-system]
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
-
+ 
 [project]
 name = "observatorio_rgps"
 version = "0.1.0"
+requires-python = ">=3.10"
 dependencies = [
-    "streamlit",
-    "pandas",
-    "docling",
+    "streamlit>=1.30.0",
+    "pandas>=2.0.0",
+    "docling>=2.15.0",
+    "sqlalchemy>=2.0.0",
+    "psycopg2-binary>=2.9.9",
+    "python-dotenv>=1.0.0",
+    "duckdb>=0.10.0",
+    "requests>=2.31.0",
     "langchain",
     "langchain-community",
 ]
+ 
