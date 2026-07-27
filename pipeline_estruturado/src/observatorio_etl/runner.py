@@ -4,6 +4,8 @@ from pathlib import Path
 import pandas as pd
 
 from observatorio_etl.config import EtlConfig, SourceConfig
+from observatorio_etl.ibge import build_ibge_gold_outputs
+from observatorio_etl.ipea_gold import build_ipea_gold_outputs
 from observatorio_etl.ipeadata import (
     IpeaDataClient,
     ipea_to_long,
@@ -33,23 +35,47 @@ class EtlRunner:
         self.ipea = IpeaDataClient()
         self.siop = SiopClient()
 
-    def run(self) -> dict[str, list[Path]]:
+    def run(
+        self,
+        source_names: set[str] | None = None,
+    ) -> dict[str, list[Path]]:
         outputs: dict[str, list[Path]] = {
             "bronze": [],
             "silver": [],
             "gold": [],
         }
-        series_frames = []
-        siop_total_frames = []
-        siop_previdencia_frames = []
-        catalog_records = []
+        series_frames: list[pd.DataFrame] = []
+        siop_total_frames: list[pd.DataFrame] = []
+        siop_previdencia_frames: list[pd.DataFrame] = []
+        catalog_records: list[dict[str, object]] = []
+        ibge_gold_requested = False
+        ipea_gold_requested = False
 
-        for source in self.config.sources:
+        selected_sources = [
+            source
+            for source in self.config.sources
+            if source_names is None or source.name in source_names
+        ]
+
+        for source in selected_sources:
             source_frame, source_outputs = self.run_source(source)
             outputs["bronze"].extend(source_outputs.get("bronze", []))
             outputs["silver"].extend(source_outputs.get("silver", []))
 
+            if source.params.get("gold_builder"):
+                ibge_gold_requested = True
+
+            if source.type == "ipeadata":
+                ipea_gold_requested = True
+
             if source_frame.empty:
+                catalog_records.append(
+                    self.build_catalog_record(
+                        source=source,
+                        structure=self.source_structure(source),
+                        rows=0,
+                    )
+                )
                 continue
 
             if source.type == "siop":
@@ -63,63 +89,35 @@ class EtlRunner:
 
                 siop_total_frames.append(total_frame)
                 siop_previdencia_frames.append(previdencia_frame)
-                structure = "resumo_execucao_orcamentaria"
             else:
                 series_frames.append(source_frame)
-                structure = "serie_temporal"
 
             catalog_records.append(
-                {
-                    "dataset": source.name,
-                    "tipo": source.type,
-                    "fonte": source.source,
-                    "tema": source.theme,
-                    "estrutura": structure,
-                    "linhas": len(source_frame),
-                }
+                self.build_catalog_record(
+                    source=source,
+                    structure=self.source_structure(source),
+                    rows=len(source_frame),
+                )
             )
 
-        if series_frames:
-            gold_frame = pd.concat(series_frames, ignore_index=True)
-            gold_path_csv = self.root / "data" / "gold" / "series_consolidadas.csv"
-            gold_path_parquet = (
-                self.root / "data" / "gold" / "series_consolidadas.parquet"
-            )
-            write_dataframe(gold_path_csv, gold_frame)
-            write_dataframe(gold_path_parquet, gold_frame)
-            outputs["gold"].extend([gold_path_csv, gold_path_parquet])
+        if series_frames and source_names is None:
+            outputs["gold"].extend(self.write_consolidated_series(series_frames))
 
         if siop_total_frames and siop_previdencia_frames:
-            siop_gold_dir = ensure_dir(self.root / "data" / "gold" / "siop")
-
-            total_gold = (
-                pd.concat(siop_total_frames, ignore_index=True)
-                .sort_values("exercicio")
-                .reset_index(drop=True)
-            )
-            previdencia_gold = (
-                pd.concat(
+            outputs["gold"].extend(
+                self.write_siop_gold(
+                    siop_total_frames,
                     siop_previdencia_frames,
-                    ignore_index=True,
                 )
-                .sort_values("exercicio")
-                .reset_index(drop=True)
             )
 
-            total_path = write_dataframe(
-                siop_gold_dir / "loa_total_por_ano.csv",
-                total_gold,
-            )
-            previdencia_path = write_dataframe(
-                siop_gold_dir / "loa_previdencia_publica_por_ano.csv",
-                previdencia_gold,
-            )
+        if ibge_gold_requested:
+            outputs["gold"].extend(self.write_ibge_gold())
 
-            outputs["gold"].extend([total_path, previdencia_path])
+        if ipea_gold_requested:
+            outputs["gold"].extend(self.write_ipea_gold())
 
-        catalog = pd.DataFrame(catalog_records)
-        catalog_path = self.root / "data" / "gold" / "catalogo_series.csv"
-        write_dataframe(catalog_path, catalog)
+        catalog_path = self.write_catalog(catalog_records)
         outputs["gold"].append(catalog_path)
 
         return outputs
@@ -143,14 +141,41 @@ class EtlRunner:
         self,
         source: SourceConfig,
     ) -> tuple[pd.DataFrame, dict[str, list[Path]]]:
-        params = source.params
+        params = dict(source.params)
+        table = str(params["table"])
+        variable = params["variable"]
+        period = params.get("period", "all")
+        territorial_level = str(params["territorial_level"])
+        localities = params.get("localities", "all")
+        decimals = params.get("decimals")
+        requested_classifications = params.get("classifications")
+        periodicity = params.get("periodicity")
+        fetch_metadata = bool(
+            params.get("fetch_metadata", False) or requested_classifications == "all"
+        )
+
+        metadata = self.sidra.fetch_metadata(table) if fetch_metadata else None
+        classifications = self.sidra.resolve_classifications(
+            metadata=metadata,
+            requested=requested_classifications,
+        )
+        query_description = self.sidra.build_query_description(
+            table=table,
+            variable=variable,
+            period=period,
+            territorial_level=territorial_level,
+            localities=localities,
+            decimals=str(decimals) if decimals is not None else None,
+            classifications=classifications,
+        )
         rows = self.sidra.fetch_table(
-            table=str(params["table"]),
-            variable=str(params["variable"]),
-            period=str(params.get("period", "all")),
-            territorial_level=str(params["territorial_level"]),
-            localities=str(params.get("localities", "all")),
-            decimals=str(params.get("decimals", "0")),
+            table=table,
+            variable=variable,
+            period=period,
+            territorial_level=territorial_level,
+            localities=localities,
+            decimals=str(decimals) if decimals is not None else None,
+            classifications=classifications,
         )
 
         bronze_dir = ensure_dir(
@@ -160,20 +185,39 @@ class EtlRunner:
             self.root / "data" / "silver" / source.source / source.theme
         )
 
+        query_json_path = write_json(
+            bronze_dir / f"{source.name}_consulta.json",
+            query_description,
+        )
         raw_json_path = write_json(
-            bronze_dir / f"{source.name}.json",
+            bronze_dir / f"{source.name}_bruto.json",
             rows,
         )
         raw_csv_path = write_dataframe(
-            bronze_dir / f"{source.name}.csv",
+            bronze_dir / f"{source.name}_bruto.csv",
             sidra_raw_to_dataframe(rows),
         )
 
+        bronze_paths = [
+            query_json_path,
+            raw_json_path,
+            raw_csv_path,
+        ]
+
+        if metadata is not None:
+            metadata_json_path = write_json(
+                bronze_dir / f"{source.name}_metadados.json",
+                metadata,
+            )
+            bronze_paths.insert(1, metadata_json_path)
+
         long_frame = sidra_to_long(
-            rows,
-            source.name,
-            source.source,
-            source.theme,
+            rows=rows,
+            dataset=source.name,
+            fonte=source.source,
+            tema=source.theme,
+            periodicidade=str(periodicity) if periodicity else None,
+            table=table,
         )
         silver_csv_path = write_dataframe(
             silver_dir / f"{source.name}.csv",
@@ -185,7 +229,7 @@ class EtlRunner:
         )
 
         return long_frame, {
-            "bronze": [raw_json_path, raw_csv_path],
+            "bronze": bronze_paths,
             "silver": [silver_csv_path, silver_parquet_path],
         }
 
@@ -273,7 +317,7 @@ class EtlRunner:
             self.root / "data" / "silver" / source.source / source.theme
         )
 
-        summary_frames = []
+        summary_frames: list[pd.DataFrame] = []
         source_outputs: dict[str, list[Path]] = {
             "bronze": [],
             "silver": [],
@@ -282,7 +326,7 @@ class EtlRunner:
         for exercicio in exercicios:
             year_params = dict(params)
             year_params["exercicio"] = exercicio
-            coletado_em = datetime.now(timezone.utc).isoformat(timespec="seconds")
+            collected_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
 
             raw_frame = self.siop.fetch_expenses(year_params)
             file_name = f"siop_loa_completa_{exercicio}"
@@ -302,7 +346,7 @@ class EtlRunner:
                 fonte=source.source,
                 tema=source.theme,
                 exercicio=exercicio,
-                coletado_em=coletado_em,
+                coletado_em=collected_at,
             )
             silver_csv_path = write_dataframe(
                 silver_dir / f"{file_name}.csv",
@@ -317,7 +361,7 @@ class EtlRunner:
                 dataframe=silver_frame,
                 fonte=source.source,
                 exercicio=exercicio,
-                coletado_em=coletado_em,
+                coletado_em=collected_at,
             )
             total_row.insert(0, "recorte", "loa_total")
 
@@ -325,7 +369,7 @@ class EtlRunner:
                 dataframe=silver_frame,
                 fonte=source.source,
                 exercicio=exercicio,
-                coletado_em=coletado_em,
+                coletado_em=collected_at,
             )
             previdencia_row.insert(
                 0,
@@ -344,3 +388,194 @@ class EtlRunner:
             pd.concat(summary_frames, ignore_index=True),
             source_outputs,
         )
+
+    def write_consolidated_series(
+        self,
+        frames: list[pd.DataFrame],
+    ) -> list[Path]:
+        gold_frame = pd.concat(frames, ignore_index=True)
+        csv_path = self.root / "data" / "gold" / "series_consolidadas.csv"
+        parquet_path = self.root / "data" / "gold" / "series_consolidadas.parquet"
+        write_dataframe(csv_path, gold_frame)
+        write_dataframe(parquet_path, gold_frame)
+        return [csv_path, parquet_path]
+
+    def write_siop_gold(
+        self,
+        total_frames: list[pd.DataFrame],
+        previdencia_frames: list[pd.DataFrame],
+    ) -> list[Path]:
+        gold_dir = ensure_dir(self.root / "data" / "gold" / "siop")
+        total_gold = (
+            pd.concat(total_frames, ignore_index=True)
+            .sort_values("exercicio")
+            .reset_index(drop=True)
+        )
+        previdencia_gold = (
+            pd.concat(previdencia_frames, ignore_index=True)
+            .sort_values("exercicio")
+            .reset_index(drop=True)
+        )
+        total_path = write_dataframe(
+            gold_dir / "loa_total_por_ano.csv",
+            total_gold,
+        )
+        previdencia_path = write_dataframe(
+            gold_dir / "loa_previdencia_publica_por_ano.csv",
+            previdencia_gold,
+        )
+        return [total_path, previdencia_path]
+
+    def write_ibge_gold(self) -> list[Path]:
+        frames: dict[str, pd.DataFrame] = {}
+        start_years: list[int] = []
+        end_years: list[int] = []
+
+        for source in self.config.sources:
+            builder = source.params.get("gold_builder")
+
+            if not builder:
+                continue
+
+            silver_path = (
+                self.root
+                / "data"
+                / "silver"
+                / source.source
+                / source.theme
+                / f"{source.name}.parquet"
+            )
+            csv_path = silver_path.with_suffix(".csv")
+
+            if silver_path.exists():
+                frame = pd.read_parquet(silver_path)
+            elif csv_path.exists():
+                frame = pd.read_csv(csv_path)
+            else:
+                continue
+
+            frames[str(builder)] = frame
+            start_years.append(int(source.params.get("gold_start_year", 2015)))
+            end_years.append(int(source.params.get("gold_end_year", 2026)))
+
+        if not frames:
+            return []
+
+        start_year = min(start_years) if start_years else 2015
+        end_year = max(end_years) if end_years else 2026
+        gold_outputs = build_ibge_gold_outputs(
+            frames=frames,
+            start_year=start_year,
+            end_year=end_year,
+        )
+        gold_dir = ensure_dir(self.root / "data" / "gold" / "ibge")
+        paths: list[Path] = []
+
+        for filename, dataframe in gold_outputs.items():
+            csv_path = write_dataframe(
+                gold_dir / f"{filename}.csv",
+                dataframe,
+            )
+            parquet_path = write_dataframe(
+                gold_dir / f"{filename}.parquet",
+                dataframe,
+            )
+            paths.extend([csv_path, parquet_path])
+
+        return paths
+
+    def write_ipea_gold(self) -> list[Path]:
+        frames: dict[str, pd.DataFrame] = {}
+
+        for source in self.config.sources:
+            if source.type != "ipeadata":
+                continue
+
+            silver_path = (
+                self.root
+                / "data"
+                / "silver"
+                / source.source
+                / source.theme
+                / f"{source.name}.parquet"
+            )
+            csv_path = silver_path.with_suffix(".csv")
+
+            if silver_path.exists():
+                frame = pd.read_parquet(silver_path)
+            elif csv_path.exists():
+                frame = pd.read_csv(csv_path)
+            else:
+                continue
+
+            frames[source.name] = frame
+
+        if not frames:
+            return []
+
+        gold_outputs = build_ipea_gold_outputs(frames)
+        gold_dir = ensure_dir(self.root / "data" / "gold" / "ipea")
+        paths: list[Path] = []
+
+        for filename, dataframe in gold_outputs.items():
+            csv_path = write_dataframe(
+                gold_dir / f"{filename}.csv",
+                dataframe,
+            )
+            parquet_path = write_dataframe(
+                gold_dir / f"{filename}.parquet",
+                dataframe,
+            )
+            paths.extend([csv_path, parquet_path])
+
+        return paths
+
+    def write_catalog(
+        self,
+        records: list[dict[str, object]],
+    ) -> Path:
+        catalog_path = self.root / "data" / "gold" / "catalogo_series.csv"
+        new_catalog = pd.DataFrame(records)
+
+        if catalog_path.exists():
+            current_catalog = pd.read_csv(catalog_path)
+            catalog = pd.concat(
+                [current_catalog, new_catalog],
+                ignore_index=True,
+            )
+            catalog = catalog.drop_duplicates(
+                subset=["dataset"],
+                keep="last",
+            )
+        else:
+            catalog = new_catalog
+
+        if not catalog.empty and "dataset" in catalog.columns:
+            catalog = catalog.sort_values("dataset").reset_index(drop=True)
+
+        return write_dataframe(catalog_path, catalog)
+
+    def build_catalog_record(
+        self,
+        source: SourceConfig,
+        structure: str,
+        rows: int,
+    ) -> dict[str, object]:
+        return {
+            "dataset": source.name,
+            "tipo": source.type,
+            "fonte": source.source,
+            "tema": source.theme,
+            "estrutura": structure,
+            "linhas": rows,
+            "atualizado_em": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        }
+
+    def source_structure(self, source: SourceConfig) -> str:
+        if source.type == "siop":
+            return "resumo_execucao_orcamentaria"
+
+        if source.params.get("gold_builder"):
+            return "indicador_ibge"
+
+        return "serie_temporal"
