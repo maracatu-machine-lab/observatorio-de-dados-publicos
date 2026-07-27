@@ -1,20 +1,18 @@
 # Pipeline Estruturado
 
-Esta pasta contém o ETL em Python usado para coletar, organizar, tratar e consolidar dados públicos estruturados.
+Esta pasta contém o ETL em Python usado para coletar, organizar, tratar, validar e consolidar dados públicos estruturados do Observatório de Dados Públicos.
 
-O projeto começou a partir da necessidade de trabalhar com dados ligados à Previdência e ao orçamento público, mas a estrutura não está limitada a esses temas. A proposta é permitir a inclusão gradual de outras bases públicas, como IBGE, IPEA, PNAD Contínua, SIOP, Tesouro Nacional e outras fontes que possam ser utilizadas nas pesquisas do observatório.
-
-Nesta etapa, o pipeline já consegue consultar fontes públicas, armazenar os retornos originais, transformar os dados e gerar arquivos consolidados. O projeto continua em desenvolvimento e deve receber novas fontes, testes e ajustes conforme as bases forem sendo estudadas.
+O projeto começou com dados ligados à Previdência e ao orçamento público, mas sua arquitetura permite incorporar progressivamente outras bases. A versão atual já integra dados do IBGE, da PNAD Contínua, do IPEAData e do SIOP, preservando os dados originais e produzindo tabelas analíticas nas camadas `bronze`, `silver` e `gold`.
 
 ## Objetivo
 
-O objetivo desta parte do projeto é construir um fluxo de ETL para dados públicos estruturados.
+O objetivo do pipeline é oferecer um fluxo reproduzível de ETL para dados públicos estruturados.
 
 ETL significa:
 
-- Extract: coletar os dados nas fontes públicas;
-- Transform: organizar, converter e padronizar os dados coletados;
-- Load: salvar os resultados em pastas próprias para uso posterior.
+- **Extract:** coletar dados em APIs, bibliotecas e serviços públicos;
+- **Transform:** limpar, converter, padronizar e validar os dados coletados;
+- **Load:** salvar os resultados em formatos adequados para análise, integração e consulta.
 
 O fluxo foi dividido em três camadas:
 
@@ -24,26 +22,102 @@ data/silver
 data/gold
 ```
 
-A camada `bronze` guarda os dados próximos ao formato original recebido da fonte.
+- A camada `bronze` preserva os retornos próximos ao formato original.
+- A camada `silver` organiza os dados em estruturas padronizadas.
+- A camada `gold` produz tabelas consolidadas e indicadores prontos para análise.
 
-A camada `silver` guarda os dados tratados e com nomes de colunas mais padronizados.
+## Fontes integradas
 
-A camada `gold` guarda arquivos consolidados para análises, gráficos, notebooks e outras etapas do projeto.
+### IBGE e PNAD Contínua
 
-## Fontes usadas nesta versão
+Os dados do IBGE e da PNAD Contínua são consultados por meio da API do SIDRA.
 
-Nesta etapa, o projeto trabalha com:
+A versão atual trabalha com indicadores relacionados a:
 
-- IBGE, por meio da API do SIDRA;
-- PNAD Contínua, também acessada por tabelas do SIDRA;
-- IPEAData, para séries econômicas e sociais;
-- SIOP, para dados da Lei Orçamentária Anual e da execução orçamentária.
+- população do Brasil;
+- Produto Interno Bruto nominal;
+- Índice Nacional de Preços ao Consumidor Amplo;
+- estrutura etária;
+- população com 60 anos ou mais;
+- força de trabalho;
+- população ocupada e desocupada;
+- taxa de desocupação;
+- quantidade de pessoas em ocupações informais;
+- taxa de informalidade;
+- quantidade de pessoas ocupadas que contribuem para a Previdência;
+- percentual de ocupados que contribuem para a Previdência.
 
-A PNAD Contínua está sendo usada, por enquanto, a partir de dados agregados disponíveis no SIDRA. O uso de microdados pode ser incluído depois, mas exige outro processo de download, leitura e transformação.
+Os produtos anuais do IBGE utilizam, como regra geral, o intervalo de 2015 a 2026. A existência de uma linha para determinado exercício não significa que todos os indicadores estejam disponíveis. Valores ausentes são preservados como nulos e recebem um status de período.
 
-Os dados do SIOP são consultados com a biblioteca `orcamentobr`. Nesta versão, o pipeline consulta os exercícios de 2015 a 2026.
+Os status usados são:
 
-A consulta do SIOP é feita separadamente para cada exercício. Cada ano é coletado com todas as categorias e dimensões disponíveis na LOA, permitindo preservar os dados completos na camada `bronze` e produzir recortes consolidados na camada `gold`.
+```text
+completo
+parcial
+indisponivel
+```
+
+O pipeline não cria valores artificiais para preencher anos sem informação oficial.
+
+### IPEAData
+
+O IPEAData é usado para consultar séries macroeconômicas.
+
+As séries atualmente cadastradas são:
+
+| Dataset | Código da série | Descrição |
+|---|---|---|
+| `ipea_ipca_indice_mensal` | `PRECOS12_IPCA12` | Número-índice mensal do IPCA |
+| `ipea_pib_real_trimestral` | `PAN4_PIBPMG4` | Variação real interanual do PIB trimestral |
+
+Na coleta validada em julho de 2026:
+
+- o IPCA mensal possui observações de dezembro de 1979 a junho de 2026;
+- o PIB real trimestral possui observações do primeiro trimestre de 1997 ao quarto trimestre de 2025.
+
+Esses períodos podem avançar em novas execuções, conforme a atualização da API.
+
+A série `PAN4_PIBPMG4` não representa um valor monetário do PIB. Ela representa a variação percentual de cada trimestre em relação ao mesmo trimestre do ano anterior.
+
+### SIOP
+
+O SIOP é usado para consultar a Lei Orçamentária Anual e a execução orçamentária por meio da biblioteca `orcamentobr`.
+
+A versão atual consulta os exercícios de 2015 a 2026.
+
+Cada exercício é coletado separadamente, preservando todas as dimensões configuradas da LOA na camada `bronze` e produzindo recortes consolidados na camada `gold`.
+
+Entre as dimensões coletadas estão:
+
+```text
+esfera
+orgao
+unidade orcamentaria
+funcao
+subfuncao
+programa
+acao
+plano orcamentario
+subtitulo
+categoria economica
+grupo de natureza da despesa
+modalidade de aplicacao
+elemento de despesa
+fonte de recursos
+identificador de uso
+resultado primario
+```
+
+Entre os valores coletados estão:
+
+```text
+PLOA
+dotacao inicial
+dotacao atualizada
+valor empenhado
+valor liquidado
+valor pago
+```
 
 ## Estrutura da pasta
 
@@ -65,7 +139,12 @@ pipeline_estruturado/
 │   │   └── siop/
 │   │       └── execucao_orcamentaria/
 │   └── gold/
-│       └── siop/
+│       ├── ibge/
+│       ├── ipea/
+│       ├── siop/
+│       ├── catalogo_series.csv
+│       ├── series_consolidadas.csv
+│       └── series_consolidadas.parquet
 ├── docs/
 │   ├── COMO_PROGRAMAR_ETL.md
 │   └── LEGENDA_PREVIDENCIA_PUBLICA.md
@@ -80,6 +159,8 @@ pipeline_estruturado/
 │       ├── cli.py
 │       ├── config.py
 │       ├── http_client.py
+│       ├── ibge.py
+│       ├── ipea_gold.py
 │       ├── ipeadata.py
 │       ├── paths.py
 │       ├── runner.py
@@ -91,21 +172,24 @@ pipeline_estruturado/
 └── README.md
 ```
 
-## O que tem em cada pasta
+## Configuração das fontes
 
-### `config/`
-
-Guarda as configurações das fontes de dados.
-
-O arquivo principal é:
+O arquivo principal de configuração é:
 
 ```text
 config/sources.json
 ```
 
-Nele ficam cadastradas as fontes que o ETL deve consultar. Cada entrada informa o nome do conjunto de dados, o tipo da fonte, o tema e os parâmetros necessários para a consulta.
+Cada entrada informa:
 
-Atualmente, o pipeline reconhece três tipos:
+- nome do dataset;
+- tipo da fonte;
+- instituição ou domínio de origem;
+- tema;
+- parâmetros específicos de consulta;
+- regras opcionais para construção da camada `gold`.
+
+Os tipos atualmente reconhecidos são:
 
 ```text
 sidra
@@ -113,72 +197,54 @@ ipeadata
 siop
 ```
 
-A configuração do SIOP contém uma lista de exercícios:
+A ideia é permitir que novas consultas sejam cadastradas sem reescrever toda a estrutura do pipeline.
 
-```json
-"exercicios": [
-  2015,
-  2016,
-  2017,
-  2018,
-  2019,
-  2020,
-  2021,
-  2022,
-  2023,
-  2024,
-  2025,
-  2026
-]
-```
+## Camada bronze
 
-A ideia é que novas consultas possam ser adicionadas nesse arquivo sem alterar toda a estrutura do projeto.
+A camada `bronze` guarda os dados brutos ou próximos ao formato original recebido das fontes.
 
-### `data/bronze/`
+Ela permite:
 
-Guarda os dados brutos ou próximos ao formato original recebido das fontes.
+- conferir o retorno da API ou biblioteca;
+- reproduzir transformações;
+- investigar problemas sem realizar uma nova coleta;
+- preservar os metadados usados na interpretação das séries.
 
-Essa camada permite conferir o conteúdo devolvido pela API ou biblioteca antes da transformação. Se algum problema aparecer na camada seguinte, os dados originais continuam disponíveis para análise.
+### SIDRA
 
-Para o SIDRA e o IPEAData, podem ser salvos arquivos JSON e CSV.
-
-Para o SIOP, a camada `bronze` preserva a LOA completa de cada exercício, incluindo todas as categorias e dimensões configuradas.
-
-As dimensões coletadas são:
+Para fontes SIDRA, podem ser salvos:
 
 ```text
-esfera
-orgao
-unidade orcamentaria
-funcao
-subfuncao
-programa
-acao
-plano orcamentario
-subtitulo
-categoria economica
-grupo de natureza da despesa
-modalidade de aplicacao
-elemento de despesa
-fonte de recursos
-identificador de uso
-resultado primario
+consulta.json
+metadados.json
+bruto.json
+bruto.csv
 ```
 
-Também são coletados os seguintes valores:
+### IPEAData
+
+Para cada série do IPEAData, são salvos:
 
 ```text
-PLOA
-dotacao inicial
-dotacao atualizada
-valor empenhado
-valor liquidado
-valor pago
+metadata.json
+values.json
+values.csv
 ```
 
-Para cada exercício do SIOP, são salvos:
+Exemplo:
 
-- um arquivo JSON com os parâmetros usados na consulta;
+```text
+data/bronze/ipea/inflacao/
+├── ipea_ipca_indice_mensal_metadata.json
+├── ipea_ipca_indice_mensal_values.json
+└── ipea_ipca_indice_mensal_values.csv
+```
+
+### SIOP
+
+Para cada exercício, são salvos:
+
+- um arquivo JSON com os parâmetros usados;
 - um arquivo CSV com o retorno bruto completo.
 
 Exemplo:
@@ -187,40 +253,59 @@ Exemplo:
 data/bronze/siop/execucao_orcamentaria/
 ├── siop_loa_completa_2015_consulta.json
 ├── siop_loa_completa_2015_bruto.csv
-├── siop_loa_completa_2016_consulta.json
-├── siop_loa_completa_2016_bruto.csv
 ├── ...
 ├── siop_loa_completa_2026_consulta.json
 └── siop_loa_completa_2026_bruto.csv
 ```
 
-### `data/silver/`
+## Camada silver
 
-Guarda os dados tratados.
+A camada `silver` contém os dados tratados e padronizados.
 
-Nessa camada, os nomes das colunas são padronizados, os valores monetários são convertidos para formato numérico e as informações de origem da coleta são acrescentadas.
+As transformações incluem:
 
-Os dados do IBGE, PNAD e IPEAData são organizados em formato de séries.
+- padronização de nomes de colunas;
+- conversão de valores numéricos;
+- identificação da fonte, tema e dataset;
+- derivação de exercício, mês e trimestre;
+- registro da data e hora da coleta;
+- preservação do valor original quando aplicável;
+- organização de classificações e dimensões.
 
-Os dados do SIOP são tratados separadamente para cada exercício. As dimensões da LOA são preservadas para permitir filtros e análises posteriores.
+Os arquivos são salvos em CSV e Parquet.
 
-Entre os campos principais estão:
+### Estrutura comum das séries
+
+Os dados do SIDRA e do IPEAData utilizam uma estrutura longa com campos como:
 
 ```text
 fonte
 tema
 dataset
+codigo_serie
+periodicidade
+periodo_codigo
+periodo_nome
 exercicio
-valor_ploa
-dotacao_inicial
-dotacao_atualizada
-valor_empenhado
-valor_liquidado
-valor_pago
+mes
+trimestre
+territorio_codigo
+territorio_nome
+variavel_codigo
+variavel_nome
+unidade_codigo
+unidade
+valor_original
+valor
 coletado_em
+extra_json
 ```
 
-Os arquivos anuais são salvos em CSV e Parquet:
+Nem todas as fontes fornecem todos os campos. Quando a informação não existe na origem, ela permanece nula.
+
+### SIOP tratado
+
+Os arquivos tratados do SIOP preservam as dimensões da LOA e os valores monetários convertidos.
 
 ```text
 data/silver/siop/execucao_orcamentaria/
@@ -231,63 +316,189 @@ data/silver/siop/execucao_orcamentaria/
 └── siop_loa_completa_2026.parquet
 ```
 
-### `data/gold/`
+## Camada gold
 
-Guarda os arquivos consolidados.
+A camada `gold` contém produtos analíticos e consolidados.
 
-As séries do IBGE, PNAD e IPEAData são reunidas nos arquivos:
+### Catálogo de séries
+
+O catálogo registra as fontes executadas:
+
+```text
+data/gold/catalogo_series.csv
+```
+
+Estrutura:
+
+```text
+dataset
+tipo
+fonte
+tema
+estrutura
+linhas
+atualizado_em
+```
+
+### Séries consolidadas
+
+Quando todas as fontes são executadas em uma única chamada, as séries temporais são reunidas em:
 
 ```text
 data/gold/series_consolidadas.csv
 data/gold/series_consolidadas.parquet
 ```
 
-O catálogo das fontes executadas é salvo em:
+Esses arquivos possuem caráter técnico e servem como ponto de entrada para consultas gerais. Para análises específicas, devem ser preferidos os produtos temáticos das pastas `ibge`, `ipea` e `siop`.
+
+### Produtos Gold do IBGE
+
+Os produtos anuais ficam em:
 
 ```text
-data/gold/catalogo_series.csv
+data/gold/ibge/
 ```
 
-Para o SIOP, são produzidos dois arquivos consolidados distintos:
+São gerados em CSV e Parquet:
+
+| Produto | Finalidade |
+|---|---|
+| `populacao_brasil_por_ano` | População anual do Brasil |
+| `pib_nominal_brasil_por_ano` | PIB nominal anual |
+| `ipca_brasil_por_ano` | Indicadores anuais do IPCA |
+| `estrutura_etaria_brasil_por_ano` | População total da PNAD e população com 60 anos ou mais |
+| `mercado_trabalho_brasil_por_ano` | Força de trabalho, ocupação, desocupação e informalidade |
+| `contribuicao_previdenciaria_brasil_por_ano` | Quantidade e percentual de ocupados contribuintes |
+| `nucleo_ibge_anual` | Integração anual dos principais indicadores do IBGE e da PNAD |
+
+Exemplo:
+
+```text
+data/gold/ibge/
+├── populacao_brasil_por_ano.csv
+├── populacao_brasil_por_ano.parquet
+├── pib_nominal_brasil_por_ano.csv
+├── pib_nominal_brasil_por_ano.parquet
+├── ipca_brasil_por_ano.csv
+├── ipca_brasil_por_ano.parquet
+├── estrutura_etaria_brasil_por_ano.csv
+├── estrutura_etaria_brasil_por_ano.parquet
+├── mercado_trabalho_brasil_por_ano.csv
+├── mercado_trabalho_brasil_por_ano.parquet
+├── contribuicao_previdenciaria_brasil_por_ano.csv
+├── contribuicao_previdenciaria_brasil_por_ano.parquet
+├── nucleo_ibge_anual.csv
+└── nucleo_ibge_anual.parquet
+```
+
+O arquivo `nucleo_ibge_anual` facilita análises que combinam demografia, atividade econômica, inflação, mercado de trabalho, informalidade e contribuição previdenciária.
+
+### Produtos Gold do IPEAData
+
+Os produtos ficam em:
+
+```text
+data/gold/ipea/
+```
+
+São gerados em CSV e Parquet.
+
+#### `ipca_brasil_por_ano`
+
+Contém:
+
+```text
+exercicio
+ipca_indice_medio
+ipca_indice_fim_periodo
+ipca_variacao_acumulada_calculada
+meses_disponiveis
+status_periodo
+```
+
+A variação acumulada é calculada por:
+
+```text
+(indice do ultimo mes disponivel do ano
+÷ indice de dezembro do ano anterior - 1) × 100
+```
+
+Quando o ano possui 12 meses, o status é `completo`. Quando possui entre 1 e 11 meses, o status é `parcial`.
+
+O primeiro ano disponível pode ter a variação acumulada nula por não existir dezembro do ano anterior na série.
+
+#### `pib_real_variacao_interanual_trimestral`
+
+Contém:
+
+```text
+exercicio
+trimestre
+periodo
+taxa_variacao_pib_real_interanual
+unidade
+status_periodo
+```
+
+Cada linha representa um trimestre. A série não é somada nem transformada em PIB anual monetário.
+
+Exemplo:
+
+```text
+data/gold/ipea/
+├── ipca_brasil_por_ano.csv
+├── ipca_brasil_por_ano.parquet
+├── pib_real_variacao_interanual_trimestral.csv
+└── pib_real_variacao_interanual_trimestral.parquet
+```
+
+### Produtos Gold do SIOP
+
+Os produtos consolidados ficam em:
+
+```text
+data/gold/siop/
+```
+
+São produzidos:
 
 ```text
 data/gold/siop/loa_total_por_ano.csv
 data/gold/siop/loa_previdencia_publica_por_ano.csv
 ```
 
-Os dois arquivos possuem a mesma estrutura:
+Os dois arquivos possuem a mesma estrutura básica:
 
 ```text
-fonte | tema | dataset | exercicio | valor_empenhado | valor_liquidado | valor_pago | coletado_em
+fonte
+tema
+dataset
+exercicio
+valor_empenhado
+valor_liquidado
+valor_pago
+coletado_em
 ```
 
 #### `loa_total_por_ano.csv`
 
-Contém uma linha para cada exercício entre 2015 e 2026.
+Contém uma linha por exercício.
 
-Cada linha representa a soma de todos os registros da LOA do respectivo exercício, sem aplicar recorte por função, órgão, programa ou outra dimensão.
+Cada linha representa a soma de todos os registros da LOA do respectivo exercício, sem recorte por função, órgão, programa ou outra dimensão.
 
 #### `loa_previdencia_publica_por_ano.csv`
 
-Contém uma linha para cada exercício entre 2015 e 2026.
+Contém uma linha por exercício.
 
-Cada linha representa a soma dos registros relacionados à Previdência Pública segundo a classificação funcional da despesa.
-
-O critério utilizado é:
-
-```text
-funcao = 09 - Previdencia Social
-```
-
-O filtro é aplicado pelo código da função, e não por palavras presentes nos nomes de órgãos, programas, ações ou planos orçamentários.
-
-## Critério do recorte de Previdência Pública
-
-O recorte de Previdência Pública considera todas as linhas da LOA classificadas na função:
+Cada linha representa a soma dos registros classificados na função:
 
 ```text
 09 - Previdencia Social
 ```
+
+## Critério do recorte de Previdência Pública
+
+O recorte considera todas as linhas da LOA classificadas na função 09.
 
 As subfunções associadas são:
 
@@ -300,7 +511,7 @@ As subfunções associadas são:
 
 Todas as linhas classificadas na função 09 são incluídas, independentemente do órgão, unidade orçamentária, programa, ação, plano orçamentário, natureza da despesa, fonte de recursos ou outra categoria.
 
-Não são incluídas linhas classificadas em outras funções, mesmo quando o nome do órgão, programa ou ação contenha expressões como `INSS`, `previdência`, `aposentadoria` ou `pensão`.
+Não são incluídas linhas de outras funções apenas porque o nome do órgão, programa ou ação contém expressões como `INSS`, `previdência`, `aposentadoria` ou `pensão`.
 
 Esse critério evita decisões baseadas apenas em palavras e torna o recorte reproduzível entre os exercícios.
 
@@ -310,114 +521,107 @@ A explicação metodológica completa fica registrada em:
 docs/LEGENDA_PREVIDENCIA_PUBLICA.md
 ```
 
-## Principais arquivos do código
+## Principais módulos do código
 
 ### `scripts/run_etl.py`
 
-É o arquivo usado para executar o projeto pelo terminal.
-
-Ele chama a interface de linha de comando definida em `cli.py`.
+Ponto de entrada para execução pelo terminal.
 
 ### `src/observatorio_etl/cli.py`
 
-Define os comandos disponíveis.
-
-Os principais comandos são:
-
-```bash
-python scripts/run_etl.py list-sources
-python scripts/run_etl.py run
-```
+Define os comandos da interface de linha de comando.
 
 ### `src/observatorio_etl/config.py`
 
-Lê o arquivo `config/sources.json` e transforma as configurações em objetos usados pelo restante do pipeline.
+Lê e valida o arquivo `config/sources.json`.
 
 ### `src/observatorio_etl/http_client.py`
 
-Centraliza as requisições HTTP feitas para as APIs.
-
-Esse módulo é usado principalmente nas consultas ao SIDRA e ao IPEAData.
+Centraliza as requisições HTTP e as políticas de tentativa.
 
 ### `src/observatorio_etl/sidra.py`
 
-Contém a lógica de acesso à API do SIDRA.
+Consulta a API do SIDRA e transforma os retornos em estrutura longa.
 
-Esse módulo é usado para dados agregados do IBGE e da PNAD Contínua.
+### `src/observatorio_etl/ibge.py`
+
+Constrói os produtos Gold anuais do IBGE e da PNAD.
+
+Entre suas responsabilidades estão:
+
+- seleção das variáveis oficiais;
+- conversão de unidades;
+- consolidação anual;
+- preservação de valores ausentes;
+- atribuição dos status de disponibilidade;
+- integração do núcleo anual do IBGE.
 
 ### `src/observatorio_etl/ipeadata.py`
 
-Contém a lógica de acesso ao IPEAData.
+Consulta metadados e valores do IPEAData.
 
-O módulo busca os metadados e os valores das séries, depois organiza as informações em formato tabular.
+Também padroniza:
+
+- periodicidade;
+- exercício;
+- mês;
+- trimestre;
+- código territorial;
+- unidade;
+- valor original;
+- valor numérico.
+
+### `src/observatorio_etl/ipea_gold.py`
+
+Constrói os produtos Gold do IPEAData:
+
+- IPCA anual derivado do número-índice mensal;
+- variação real interanual do PIB por trimestre.
 
 ### `src/observatorio_etl/siop.py`
 
-Contém a lógica de consulta, validação e tratamento dos dados do SIOP.
+Consulta, valida e transforma os dados do SIOP.
 
-A coleta é feita por meio da biblioteca `orcamentobr`.
+Entre suas responsabilidades estão:
 
-O módulo:
-
-1. recebe os parâmetros da consulta;
-2. valida se todas as dimensões e valores necessários estão ativados;
-3. consulta um exercício por vez;
-4. repete a tentativa em caso de falha temporária;
-5. padroniza os nomes das colunas;
-6. converte os valores monetários para formato numérico;
-7. preserva as dimensões da LOA;
-8. soma o total da LOA de cada exercício;
-9. filtra a função 09;
-10. soma os valores relacionados à Previdência Pública.
-
-As funções principais são:
-
-```text
-SiopClient.fetch_expenses()
-validate_complete_loa_params()
-prepare_siop_dataframe()
-build_total_loa_row()
-build_previdencia_publica_row()
-filter_previdencia_publica()
-```
-
-### `src/observatorio_etl/paths.py`
-
-Organiza os caminhos principais do projeto.
-
-Isso evita repetir os mesmos caminhos em vários módulos.
-
-### `src/observatorio_etl/storage.py`
-
-Contém funções para salvar dados nos formatos JSON, CSV e Parquet.
+1. validar os parâmetros da consulta;
+2. consultar um exercício por vez;
+3. repetir a tentativa em falhas temporárias;
+4. padronizar as colunas;
+5. converter valores monetários;
+6. preservar as dimensões da LOA;
+7. construir o total anual;
+8. filtrar a função 09;
+9. construir o recorte anual da Previdência Pública.
 
 ### `src/observatorio_etl/runner.py`
 
 Coordena a execução do ETL.
 
-Esse módulo:
+O módulo:
 
 1. lê as fontes cadastradas;
-2. identifica o tipo de cada fonte;
+2. seleciona as fontes solicitadas;
 3. chama o coletor correspondente;
 4. salva os dados na camada `bronze`;
 5. transforma e salva os dados na camada `silver`;
-6. consolida os resultados na camada `gold`;
-7. percorre os exercícios de 2015 a 2026 para a fonte SIOP;
-8. gera o arquivo com o total da LOA por exercício;
-9. gera o arquivo com o total relacionado à Previdência Pública por exercício.
+6. gera os produtos Gold do IBGE;
+7. gera os produtos Gold do IPEAData;
+8. gera os consolidados do SIOP;
+9. atualiza o catálogo de séries;
+10. gera as séries consolidadas quando todas as fontes são executadas.
 
-O `runner.py` reconhece atualmente fontes dos tipos:
+### `src/observatorio_etl/paths.py`
 
-```text
-sidra
-ipeadata
-siop
-```
+Organiza os caminhos principais do projeto.
 
-## Como instalar
+### `src/observatorio_etl/storage.py`
 
-Acesse a pasta do pipeline:
+Salva dados em JSON, CSV e Parquet.
+
+## Instalação
+
+Acesse a pasta:
 
 ```bash
 cd pipeline_estruturado
@@ -429,13 +633,13 @@ Crie o ambiente virtual:
 python3 -m venv .venv
 ```
 
-Ative o ambiente virtual no Linux:
+Ative no Linux:
 
 ```bash
 source .venv/bin/activate
 ```
 
-No Windows PowerShell:
+Ative no Windows PowerShell:
 
 ```powershell
 .\.venv\Scripts\Activate.ps1
@@ -447,7 +651,7 @@ Instale as dependências:
 python -m pip install -r requirements.txt
 ```
 
-As principais dependências são:
+Entre as principais dependências estão:
 
 ```text
 requests
@@ -456,56 +660,71 @@ pyarrow
 orcamentobr
 ```
 
-## Como executar
+## Execução
 
-Para conferir as fontes cadastradas:
+### Listar as fontes
 
 ```bash
 python scripts/run_etl.py list-sources
 ```
 
-Entre as fontes listadas, deve aparecer:
-
-```text
-siop_loa_completa_2015_2026 | siop | siop/execucao_orcamentaria
-```
-
-Para executar a coleta e o tratamento de todas as fontes:
+### Executar todas as fontes
 
 ```bash
 python scripts/run_etl.py run
 ```
 
-A coleta do SIOP realiza uma consulta para cada exercício e solicita todas as dimensões da LOA. Por isso, essa etapa pode levar mais tempo e produzir arquivos maiores do que as consultas das outras fontes.
+A execução completa pode levar mais tempo por causa das consultas anuais do SIOP.
 
-## O que acontece quando o ETL roda
+### Executar uma fonte específica
 
-Quando o comando `run` é executado, o pipeline realiza as seguintes etapas:
+```bash
+python scripts/run_etl.py run \
+  --source ipea_ipca_indice_mensal
+```
 
-1. lê o arquivo `config/sources.json`;
-2. percorre as fontes cadastradas;
-3. identifica se cada fonte usa SIDRA, IPEAData ou SIOP;
-4. faz a consulta correspondente;
-5. salva o retorno original na camada `bronze`;
-6. transforma os dados;
-7. salva os dados tratados na camada `silver`;
-8. reúne as séries do IBGE, PNAD e IPEAData;
-9. consulta a LOA completa para cada exercício entre 2015 e 2026;
-10. soma os valores totais de cada exercício;
-11. filtra os registros da função 09;
-12. soma os valores de Previdência Pública;
-13. gera os dois arquivos consolidados na camada `gold`;
-14. gera o catálogo das fontes executadas.
+### Executar várias fontes específicas
+
+O parâmetro `--source` pode ser repetido:
+
+```bash
+python scripts/run_etl.py run \
+  --source ipea_ipca_indice_mensal \
+  --source ipea_pib_real_trimestral
+```
+
+Outro exemplo:
+
+```bash
+python scripts/run_etl.py run \
+  --source pnad_condicao_trabalho_brasil \
+  --source pnad_taxa_desocupacao_brasil
+```
+
+## Fluxo da execução
+
+Quando o comando `run` é executado, o pipeline:
+
+1. lê `config/sources.json`;
+2. seleciona todas as fontes ou apenas as fontes informadas;
+3. identifica o tipo de cada fonte;
+4. realiza a coleta;
+5. salva os dados originais na camada `bronze`;
+6. padroniza os dados;
+7. salva CSV e Parquet na camada `silver`;
+8. gera produtos Gold específicos;
+9. atualiza `catalogo_series.csv`;
+10. gera `series_consolidadas` quando todas as fontes são processadas.
 
 ## Como adicionar uma nova fonte
 
-Para adicionar uma nova fonte, edite:
+Edite:
 
 ```text
 config/sources.json
 ```
 
-### Exemplo usando SIDRA
+### Exemplo SIDRA
 
 ```json
 {
@@ -515,14 +734,20 @@ config/sources.json
   "theme": "populacao",
   "table": "6579",
   "variable": "9324",
-  "period": "last",
+  "period": "all",
   "territorial_level": "1",
   "localities": "all",
-  "decimals": "0"
+  "decimals": "0",
+  "periodicity": "anual",
+  "gold_builder": "populacao_estimada",
+  "gold_start_year": 2015,
+  "gold_end_year": 2026
 }
 ```
 
-### Exemplo usando IPEAData
+O parâmetro `gold_builder` identifica o construtor usado na consolidação anual do IBGE.
+
+### Exemplo IPEAData
 
 ```json
 {
@@ -534,7 +759,7 @@ config/sources.json
 }
 ```
 
-### Exemplo usando SIOP
+### Exemplo SIOP
 
 ```json
 {
@@ -586,125 +811,118 @@ config/sources.json
 }
 ```
 
-Depois de editar o arquivo, confira as fontes:
+Depois de editar o arquivo:
 
 ```bash
 python scripts/run_etl.py list-sources
 ```
 
-Em seguida, execute:
+Em seguida, execute a fonte cadastrada ou o pipeline completo.
 
-```bash
-python scripts/run_etl.py run
-```
+## Validações aplicadas
 
-## Saídas esperadas
+As validações atuais incluem:
 
-### IBGE, PNAD e IPEAData
+- datas convertíveis;
+- valores numéricos;
+- identificação de registros duplicados;
+- continuidade mensal e trimestral;
+- verificação de percentuais entre 0 e 100;
+- verificação de quantidades não negativas;
+- consistência entre força de trabalho, ocupados e desocupados;
+- comparação entre quantidade e percentual de contribuintes;
+- preservação de anos sem dados como nulos;
+- identificação de períodos completos, parciais e indisponíveis;
+- verificação do recorte funcional da Previdência no SIOP.
 
-```text
-data/bronze/ibge/
-data/bronze/ipea/
-data/bronze/pnad/
+As validações ajudam a identificar problemas técnicos e diferenças metodológicas, mas não substituem a leitura da documentação oficial de cada fonte.
 
-data/silver/ibge/
-data/silver/ipea/
-data/silver/pnad/
+## Possibilidades de análise
 
-data/gold/series_consolidadas.csv
-data/gold/series_consolidadas.parquet
-data/gold/catalogo_series.csv
-```
+Os produtos Gold permitem construir análises sobre:
 
-### SIOP
+- crescimento populacional;
+- envelhecimento da população;
+- mercado de trabalho;
+- desemprego;
+- informalidade;
+- cobertura contributiva previdenciária;
+- evolução nominal do PIB;
+- inflação anual e mensal;
+- crescimento real trimestral do PIB;
+- evolução da LOA;
+- evolução do orçamento relacionado à Previdência;
+- participação da Previdência no orçamento;
+- valores orçamentários corrigidos pela inflação;
+- relações entre emprego, contribuição, demografia e orçamento público.
 
-Na camada `bronze`, são criados arquivos completos para cada exercício:
-
-```text
-data/bronze/siop/execucao_orcamentaria/
-├── siop_loa_completa_2015_consulta.json
-├── siop_loa_completa_2015_bruto.csv
-├── ...
-├── siop_loa_completa_2026_consulta.json
-└── siop_loa_completa_2026_bruto.csv
-```
-
-Na camada `silver`, são criados arquivos tratados para cada exercício:
-
-```text
-data/silver/siop/execucao_orcamentaria/
-├── siop_loa_completa_2015.csv
-├── siop_loa_completa_2015.parquet
-├── ...
-├── siop_loa_completa_2026.csv
-└── siop_loa_completa_2026.parquet
-```
-
-Na camada `gold`, são criados:
-
-```text
-data/gold/siop/
-├── loa_total_por_ano.csv
-└── loa_previdencia_publica_por_ano.csv
-```
-
-Os dois arquivos possuem esta estrutura:
-
-```text
-fonte | tema | dataset | exercicio | valor_empenhado | valor_liquidado | valor_pago | coletado_em
-```
-
-Exemplo do arquivo total:
-
-```csv
-fonte,tema,dataset,exercicio,valor_empenhado,valor_liquidado,valor_pago,coletado_em
-siop,execucao_orcamentaria,siop_loa_total_por_ano,2015,valor,valor,valor,data_hora
-```
-
-Exemplo do arquivo de Previdência Pública:
-
-```csv
-fonte,tema,dataset,exercicio,valor_empenhado,valor_liquidado,valor_pago,coletado_em
-siop,previdencia_publica,siop_loa_previdencia_publica_por_ano,2015,valor,valor,valor,data_hora
-```
+As comparações entre fontes devem respeitar a granularidade e a unidade de cada indicador.
 
 ## Situação atual
 
-Nesta versão, o pipeline já possui funções para:
+Nesta versão, o pipeline já permite:
 
 - listar as fontes cadastradas;
-- consultar dados do IBGE pelo SIDRA;
-- consultar dados agregados da PNAD Contínua pelo SIDRA;
+- executar todas as fontes;
+- executar uma ou várias fontes específicas;
+- consultar o IBGE e a PNAD pelo SIDRA;
 - consultar séries do IPEAData;
-- consultar a LOA completa do SIOP entre 2015 e 2026;
-- preservar todas as categorias e dimensões na camada `bronze`;
-- repetir consultas do SIOP em caso de falha temporária;
+- consultar a LOA completa do SIOP;
+- preservar os retornos originais;
 - gerar arquivos tratados em CSV e Parquet;
-- consolidar séries temporais;
-- gerar o total da LOA por exercício;
-- gerar o total relacionado à Previdência Pública por exercício;
-- registrar a metodologia do recorte previdenciário.
+- consolidar indicadores anuais do IBGE e da PNAD;
+- gerar produtos mensais, trimestrais e anuais do IPEAData;
+- gerar o total anual da LOA;
+- gerar o recorte anual da Previdência Pública;
+- registrar status de disponibilidade;
+- manter um catálogo das séries executadas;
+- produzir uma base adequada para análises e futura carga em banco de dados.
 
-Ainda existem pontos que podem ser desenvolvidos:
+## Próximas etapas
 
-- adicionar novas tabelas e séries;
-- incluir dados do Tesouro Nacional;
-- criar logs mais detalhados;
-- incluir testes automatizados;
-- melhorar a documentação das variáveis;
-- criar notebooks de análise;
-- permitir a execução de apenas uma fonte;
-- permitir a escolha dos exercícios pelo terminal;
+Entre os próximos desenvolvimentos estão:
+
+- criar tabelas de comparação entre IBGE, IPEAData e SIOP;
+- produzir um painel anual integrado;
+- criar regras automáticas de auditoria e inconsistências;
+- incorporar a camada Gold em banco de dados;
+- criar notebooks analíticos;
+- desenvolver visualizações e dashboards;
+- adicionar testes automatizados;
+- ampliar a documentação das variáveis;
+- adicionar novas fontes públicas;
 - estudar o uso de microdados da PNAD;
-- incluir validações para valores ausentes e resultados inesperados;
-- comparar os dados do SIOP com outras fontes orçamentárias;
-- avaliar formas de reduzir o tempo de consulta da LOA completa.
+- avaliar outras fontes orçamentárias;
+- criar logs mais detalhados;
+- reduzir o tempo de consultas mais pesadas.
 
-## Observações sobre os dados do SIOP
+## Observações sobre os dados
 
-O exercício de 2026 ainda está em andamento. Por isso, os valores de empenhado, liquidado e pago representam o acumulado disponível no momento da coleta e não um exercício encerrado.
+### Exercício de 2026
 
-Os valores dos demais anos também dependem da atualização e da disponibilidade das informações no endpoint consultado.
+O exercício de 2026 ainda está em andamento.
+
+Por isso:
+
+- valores do SIOP representam o acumulado disponível no momento da coleta;
+- algumas séries anuais podem estar parciais;
+- indicadores com meses futuros permanecem nulos;
+- o status do período deve ser consultado antes de realizar comparações.
+
+### IPEAData e IBGE
+
+Algumas séries disseminadas pelo IPEAData têm origem no próprio IBGE.
+
+O IPEAData funciona, nesses casos, como plataforma de disseminação. Portanto, diferenças entre produtos do IBGE e do IPEAData podem resultar de:
+
+- periodicidade;
+- metodologia de agregação;
+- momento da atualização;
+- revisão da série;
+- arredondamento;
+- recorte temporal.
+
+### Certificado do SIOP
 
 A opção:
 
@@ -712,14 +930,18 @@ A opção:
 "ignore_secure_certificate": true
 ```
 
-foi usada porque o endpoint do SIOP apresentou falha na validação do certificado SSL durante os testes. Essa configuração deve permanecer restrita à consulta do SIOP.
+foi usada porque o endpoint do SIOP apresentou falha de validação do certificado SSL durante os testes.
 
-A consulta completa da LOA pode produzir arquivos grandes e levar vários minutos por exercício.
+Essa configuração deve permanecer restrita à consulta do SIOP.
 
-## Observações sobre o projeto
+### Preservação da camada bronze
 
-O projeto ainda está em desenvolvimento. Algumas partes podem mudar conforme novas fontes forem incluídas e os resultados das consultas forem avaliados.
+Os dados da camada `bronze` devem ser preservados sempre que possível.
 
-A separação entre `bronze`, `silver` e `gold` ajuda a acompanhar as etapas do ETL e facilita o reprocessamento dos dados.
+Alterações, filtros, padronizações e consolidações devem ocorrer nas camadas seguintes. Essa separação facilita auditoria, reprocessamento e rastreabilidade.
 
-Os dados da camada `bronze` devem ser preservados sempre que possível, pois representam o retorno mais próximo da fonte original. As alterações, padronizações, filtros e consolidações devem acontecer nas camadas seguintes.
+## Estado do projeto
+
+O projeto continua em desenvolvimento.
+
+A arquitetura atual já permite ampliar as fontes e criar produtos analíticos sem misturar dados brutos, dados tratados e resultados consolidados. As próximas etapas deverão concentrar-se no cruzamento entre fontes, na auditoria automática e na disponibilização dos produtos Gold em banco de dados e ferramentas de visualização.
