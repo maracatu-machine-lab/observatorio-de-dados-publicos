@@ -20,16 +20,7 @@ O **Observatório de Dados Públicos** é um projeto de pesquisa desenvolvido no
 
 O projeto tem como objetivo automatizar a extração, padronização e consolidação de informações provenientes dos relatórios oficiais do **Regime Geral de Previdência Social (RGPS)** publicados mensalmente pelo Governo Federal.
 
-Os dados extraídos são transformados em matrizes estruturadas e armazenados em uma arquitetura de medalhões (**Bronze → Prata → Gold**), possibilitando sua utilização em:
-
-- Ciência de Dados
-- Engenharia de Dados
-- Estatística
-- Econometria
-- Machine Learning
-- Deep Learning
-- Forecasting de Séries Temporais
-- Pesquisas em Previdência Social
+Os dados extraídos são transformados em matrizes estruturadas e armazenados em uma arquitetura de medalhões (**Bronze → Prata → Gold**).
 
 O pipeline foi projetado para lidar automaticamente com mudanças de layout, alterações na estrutura das tabelas (**Schema Drift**) e inconsistências provenientes da extração OCR, garantindo reprodutibilidade, rastreabilidade e qualidade dos dados produzidos.
 
