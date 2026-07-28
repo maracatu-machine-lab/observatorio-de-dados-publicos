@@ -1,4 +1,5 @@
 import json
+import unicodedata
 from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import quote
@@ -79,6 +80,15 @@ def ipea_to_long(
             "UNINOME",
         ],
     )
+    multiplier_name = first_present(
+        metadata,
+        [
+            "MULNOME",
+            "MULTIPLICADOR",
+            "MULTIPLICADOR_NOME",
+        ],
+    )
+    multiplier_factor = parse_multiplier_factor(multiplier_name)
     metadata_territory_code = first_present(
         metadata,
         [
@@ -149,6 +159,8 @@ def ipea_to_long(
                 "variavel_nome": variable_name,
                 "unidade_codigo": unit_code,
                 "unidade": unit,
+                "multiplicador_nome": multiplier_name,
+                "fator_multiplicador": multiplier_factor,
                 "valor_original": original_value,
                 "valor": parse_number(original_value),
                 "coletado_em": collected_at,
@@ -176,6 +188,8 @@ def ipea_to_long(
         "variavel_nome",
         "unidade_codigo",
         "unidade",
+        "multiplicador_nome",
+        "fator_multiplicador",
         "valor_original",
         "valor",
         "coletado_em",
@@ -286,6 +300,45 @@ def normalize_periodicity(value: Any) -> str | None:
     text = str(value).strip().casefold()
 
     return text or None
+
+
+def parse_multiplier_factor(value: Any) -> float:
+    if value in {
+        None,
+        "",
+        "...",
+        "-",
+    }:
+        return 1.0
+
+    text = normalize_text(value)
+
+    multiplier_map = {
+        "unidade": 1.0,
+        "unidades": 1.0,
+        "mil": 1_000.0,
+        "milhar": 1_000.0,
+        "milhares": 1_000.0,
+        "milhao": 1_000_000.0,
+        "milhoes": 1_000_000.0,
+        "bilhao": 1_000_000_000.0,
+        "bilhoes": 1_000_000_000.0,
+        "trilhao": 1_000_000_000_000.0,
+        "trilhoes": 1_000_000_000_000.0,
+    }
+
+    return multiplier_map.get(text, 1.0)
+
+
+def normalize_text(value: Any) -> str:
+    text = unicodedata.normalize(
+        "NFKD",
+        str(value),
+    )
+    text = "".join(
+        character for character in text if not unicodedata.combining(character)
+    )
+    return " ".join(text.strip().casefold().split())
 
 
 def parse_number(value: Any) -> float | None:

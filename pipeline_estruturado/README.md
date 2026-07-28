@@ -1,20 +1,24 @@
 # Pipeline Estruturado
 
-Esta pasta contém o ETL em Python usado para coletar, organizar, tratar, validar e consolidar dados públicos estruturados do Observatório de Dados Públicos.
+Esta pasta contém o pipeline de dados em Python do **Observatório de Dados Públicos**. O projeto coleta, preserva, transforma, valida, consolida e compara dados públicos estruturados provenientes do IBGE/SIDRA, da PNAD Contínua, do IPEAData e do SIOP.
 
-O projeto começou com dados ligados à Previdência e ao orçamento público, mas sua arquitetura permite incorporar progressivamente outras bases. A versão atual já integra dados do IBGE, da PNAD Contínua, do IPEAData e do SIOP, preservando os dados originais e produzindo tabelas analíticas nas camadas `bronze`, `silver` e `gold`.
+A implementação segue uma arquitetura em camadas `bronze`, `silver` e `gold`. O fluxo combina características de ETL e ELT:
+
+- os dados são extraídos das fontes públicas e preservados na camada `bronze`;
+- os registros são limpos, tipados e padronizados na camada `silver`;
+- as transformações analíticas, agregações e comparações são produzidas na camada `gold`.
 
 ## Objetivo
 
-O objetivo do pipeline é oferecer um fluxo reproduzível de ETL para dados públicos estruturados.
+O objetivo do pipeline é oferecer um fluxo reproduzível e auditável para dados públicos estruturados.
 
 ETL significa:
 
-- **Extract:** coletar dados em APIs, bibliotecas e serviços públicos;
-- **Transform:** limpar, converter, padronizar e validar os dados coletados;
-- **Load:** salvar os resultados em formatos adequados para análise, integração e consulta.
+- **Extract:** coletar dados, metadados e parâmetros em APIs, bibliotecas e serviços públicos;
+- **Transform:** limpar, converter, normalizar, enriquecer, agregar e validar os dados coletados;
+- **Load:** salvar os resultados em formatos adequados para consulta, análise e integração.
 
-O fluxo foi dividido em três camadas:
+As três camadas principais são:
 
 ```text
 data/bronze
@@ -23,8 +27,8 @@ data/gold
 ```
 
 - A camada `bronze` preserva os retornos próximos ao formato original.
-- A camada `silver` organiza os dados em estruturas padronizadas.
-- A camada `gold` produz tabelas consolidadas e indicadores prontos para análise.
+- A camada `silver` contém dados tratados e padronizados.
+- A camada `gold` contém tabelas analíticas, indicadores, reconciliações e comparações entre fontes.
 
 ## Fontes integradas
 
@@ -32,7 +36,7 @@ data/gold
 
 Os dados do IBGE e da PNAD Contínua são consultados por meio da API do SIDRA.
 
-A versão atual trabalha com indicadores relacionados a:
+A configuração atual inclui indicadores relacionados a:
 
 - população do Brasil;
 - Produto Interno Bruto nominal;
@@ -47,9 +51,9 @@ A versão atual trabalha com indicadores relacionados a:
 - quantidade de pessoas ocupadas que contribuem para a Previdência;
 - percentual de ocupados que contribuem para a Previdência.
 
-Os produtos anuais do IBGE utilizam, como regra geral, o intervalo de 2015 a 2026. A existência de uma linha para determinado exercício não significa que todos os indicadores estejam disponíveis. Valores ausentes são preservados como nulos e recebem um status de período.
+Os produtos anuais do IBGE utilizam, como regra geral, o intervalo de 2015 a 2026. A existência de uma linha para determinado exercício não significa que todos os indicadores estejam disponíveis. Valores ausentes são preservados como nulos.
 
-Os status usados são:
+Os status de disponibilidade usados são:
 
 ```text
 completo
@@ -57,11 +61,11 @@ parcial
 indisponivel
 ```
 
-O pipeline não cria valores artificiais para preencher anos sem informação oficial.
+O pipeline não projeta nem cria valores artificiais para preencher períodos sem informação oficial.
 
 ### IPEAData
 
-O IPEAData é usado para consultar séries macroeconômicas.
+O IPEAData é usado para consultar séries macroeconômicas e séries do fluxo financeiro do Regime Geral de Previdência Social.
 
 As séries atualmente cadastradas são:
 
@@ -69,23 +73,39 @@ As séries atualmente cadastradas são:
 |---|---|---|
 | `ipea_ipca_indice_mensal` | `PRECOS12_IPCA12` | Número-índice mensal do IPCA |
 | `ipea_pib_real_trimestral` | `PAN4_PIBPMG4` | Variação real interanual do PIB trimestral |
+| `ipea_rgps_arrecadacao_liquida_mensal` | `MPAS12_ARRLIQ12` | Arrecadação líquida mensal do RGPS |
+| `ipea_rgps_beneficios_previdenciarios_mensal` | `MPAS12_BENPREV12` | Benefícios previdenciários mensais do RGPS |
+| `ipea_rgps_resultado_primario_mensal` | `MPAS12_RESPRGPS12` | Resultado primário mensal do RGPS |
 
 Na coleta validada em julho de 2026:
 
-- o IPCA mensal possui observações de dezembro de 1979 a junho de 2026;
-- o PIB real trimestral possui observações do primeiro trimestre de 1997 ao quarto trimestre de 2025.
+- o IPCA mensal possuía observações de dezembro de 1979 a junho de 2026;
+- o PIB real trimestral possuía observações do primeiro trimestre de 1997 ao quarto trimestre de 2025;
+- as três séries do RGPS possuíam 279 observações mensais, de fevereiro de 2003 a abril de 2026.
 
 Esses períodos podem avançar em novas execuções, conforme a atualização da API.
 
 A série `PAN4_PIBPMG4` não representa um valor monetário do PIB. Ela representa a variação percentual de cada trimestre em relação ao mesmo trimestre do ano anterior.
 
+As séries previdenciárias usam unidade `R$` e multiplicador `mil`. O pipeline preserva o valor recebido na camada `silver` e aplica o fator de multiplicação na construção dos produtos `gold`, passando os valores para reais.
+
+O resultado primário oficial é mantido separadamente do resultado recalculado:
+
+```text
+resultado primario calculado
+=
+arrecadacao liquida
+-
+beneficios previdenciarios
+```
+
+Quando a identidade não fecha exatamente, o pipeline preserva os dois resultados e registra a diferença observada. A diferença não é tratada automaticamente como erro da fonte.
+
 ### SIOP
 
 O SIOP é usado para consultar a Lei Orçamentária Anual e a execução orçamentária por meio da biblioteca `orcamentobr`.
 
-A versão atual consulta os exercícios de 2015 a 2026.
-
-Cada exercício é coletado separadamente, preservando todas as dimensões configuradas da LOA na camada `bronze` e produzindo recortes consolidados na camada `gold`.
+A configuração atual consulta os exercícios de 2015 a 2026. Cada exercício é coletado separadamente, preservando as dimensões configuradas da LOA na camada `bronze` e produzindo tabelas tratadas e consolidadas nas camadas seguintes.
 
 Entre as dimensões coletadas estão:
 
@@ -139,6 +159,7 @@ pipeline_estruturado/
 │   │   └── siop/
 │   │       └── execucao_orcamentaria/
 │   └── gold/
+│       ├── comparacoes/
 │       ├── ibge/
 │       ├── ipea/
 │       ├── siop/
@@ -152,6 +173,8 @@ pipeline_estruturado/
 ├── notebooks/
 ├── outputs/
 ├── scripts/
+│   ├── gerar_comparacao_previdencia.py
+│   ├── inventariar_siop_previdencia_acoes.py
 │   └── run_etl.py
 ├── src/
 │   └── observatorio_etl/
@@ -161,16 +184,21 @@ pipeline_estruturado/
 │       ├── http_client.py
 │       ├── ibge.py
 │       ├── ipea_gold.py
+│       ├── ipea_previdencia_gold.py
 │       ├── ipeadata.py
 │       ├── paths.py
+│       ├── previdencia_comparacoes.py
 │       ├── runner.py
 │       ├── sidra.py
 │       ├── siop.py
+│       ├── siop_previdencia_gold.py
 │       └── storage.py
 ├── requirements.txt
 ├── pyproject.toml
 └── README.md
 ```
+
+Os arquivos efetivamente presentes podem variar conforme o estágio de desenvolvimento. Os diretórios `data`, `logs` e `outputs` armazenam artefatos de execução e não fazem parte do código-fonte principal.
 
 ## Configuração das fontes
 
@@ -197,18 +225,21 @@ ipeadata
 siop
 ```
 
-A ideia é permitir que novas consultas sejam cadastradas sem reescrever toda a estrutura do pipeline.
+A configuração permite acrescentar novas consultas sem reescrever toda a estrutura do pipeline.
 
-## Camada bronze
+## Camada Bronze
 
 A camada `bronze` guarda os dados brutos ou próximos ao formato original recebido das fontes.
 
 Ela permite:
 
 - conferir o retorno da API ou biblioteca;
-- reproduzir transformações;
-- investigar problemas sem realizar uma nova coleta;
-- preservar os metadados usados na interpretação das séries.
+- preservar parâmetros e metadados de consulta;
+- investigar problemas de coleta;
+- auditar transformações;
+- reaproveitar os dados em etapas futuras de reprocessamento.
+
+Na execução atual, a transformação para `silver` ocorre a partir da resposta recebida em memória, depois de o conteúdo bruto ser registrado. A arquitetura já preserva a Bronze, mas ainda não possui um comando independente para reconstruir toda a Silver exclusivamente a partir dela.
 
 ### SIDRA
 
@@ -234,10 +265,16 @@ values.csv
 Exemplo:
 
 ```text
-data/bronze/ipea/inflacao/
-├── ipea_ipca_indice_mensal_metadata.json
-├── ipea_ipca_indice_mensal_values.json
-└── ipea_ipca_indice_mensal_values.csv
+data/bronze/ipea/previdencia_rgps/
+├── ipea_rgps_arrecadacao_liquida_mensal_metadata.json
+├── ipea_rgps_arrecadacao_liquida_mensal_values.json
+├── ipea_rgps_arrecadacao_liquida_mensal_values.csv
+├── ipea_rgps_beneficios_previdenciarios_mensal_metadata.json
+├── ipea_rgps_beneficios_previdenciarios_mensal_values.json
+├── ipea_rgps_beneficios_previdenciarios_mensal_values.csv
+├── ipea_rgps_resultado_primario_mensal_metadata.json
+├── ipea_rgps_resultado_primario_mensal_values.json
+└── ipea_rgps_resultado_primario_mensal_values.csv
 ```
 
 ### SIOP
@@ -258,7 +295,7 @@ data/bronze/siop/execucao_orcamentaria/
 └── siop_loa_completa_2026_bruto.csv
 ```
 
-## Camada silver
+## Camada Silver
 
 A camada `silver` contém os dados tratados e padronizados.
 
@@ -266,10 +303,13 @@ As transformações incluem:
 
 - padronização de nomes de colunas;
 - conversão de valores numéricos;
-- identificação da fonte, tema e dataset;
+- interpretação de datas e períodos;
 - derivação de exercício, mês e trimestre;
+- identificação de fonte, tema e dataset;
+- normalização de códigos territoriais e orçamentários;
 - registro da data e hora da coleta;
 - preservação do valor original quando aplicável;
+- preservação de unidades e multiplicadores;
 - organização de classificações e dimensões.
 
 Os arquivos são salvos em CSV e Parquet.
@@ -295,6 +335,8 @@ variavel_codigo
 variavel_nome
 unidade_codigo
 unidade
+multiplicador_nome
+fator_multiplicador
 valor_original
 valor
 coletado_em
@@ -302,6 +344,8 @@ extra_json
 ```
 
 Nem todas as fontes fornecem todos os campos. Quando a informação não existe na origem, ela permanece nula.
+
+As colunas textuais da consolidação são harmonizadas antes da gravação em Parquet. Isso evita tipos mistos em campos como `valor_original`, que podem receber representações diferentes conforme a fonte.
 
 ### SIOP tratado
 
@@ -316,9 +360,9 @@ data/silver/siop/execucao_orcamentaria/
 └── siop_loa_completa_2026.parquet
 ```
 
-## Camada gold
+## Camada Gold
 
-A camada `gold` contém produtos analíticos e consolidados.
+A camada `gold` contém produtos analíticos, agregações, validações e comparações entre fontes.
 
 ### Catálogo de séries
 
@@ -328,7 +372,7 @@ O catálogo registra as fontes executadas:
 data/gold/catalogo_series.csv
 ```
 
-Estrutura:
+Estrutura básica:
 
 ```text
 dataset
@@ -349,7 +393,7 @@ data/gold/series_consolidadas.csv
 data/gold/series_consolidadas.parquet
 ```
 
-Esses arquivos possuem caráter técnico e servem como ponto de entrada para consultas gerais. Para análises específicas, devem ser preferidos os produtos temáticos das pastas `ibge`, `ipea` e `siop`.
+Esses arquivos possuem caráter técnico e servem como ponto de entrada para consultas gerais. Para análises específicas, devem ser preferidos os produtos temáticos das pastas `ibge`, `ipea`, `siop` e `comparacoes`.
 
 ### Produtos Gold do IBGE
 
@@ -371,37 +415,15 @@ São gerados em CSV e Parquet:
 | `contribuicao_previdenciaria_brasil_por_ano` | Quantidade e percentual de ocupados contribuintes |
 | `nucleo_ibge_anual` | Integração anual dos principais indicadores do IBGE e da PNAD |
 
-Exemplo:
-
-```text
-data/gold/ibge/
-├── populacao_brasil_por_ano.csv
-├── populacao_brasil_por_ano.parquet
-├── pib_nominal_brasil_por_ano.csv
-├── pib_nominal_brasil_por_ano.parquet
-├── ipca_brasil_por_ano.csv
-├── ipca_brasil_por_ano.parquet
-├── estrutura_etaria_brasil_por_ano.csv
-├── estrutura_etaria_brasil_por_ano.parquet
-├── mercado_trabalho_brasil_por_ano.csv
-├── mercado_trabalho_brasil_por_ano.parquet
-├── contribuicao_previdenciaria_brasil_por_ano.csv
-├── contribuicao_previdenciaria_brasil_por_ano.parquet
-├── nucleo_ibge_anual.csv
-└── nucleo_ibge_anual.parquet
-```
-
 O arquivo `nucleo_ibge_anual` facilita análises que combinam demografia, atividade econômica, inflação, mercado de trabalho, informalidade e contribuição previdenciária.
 
-### Produtos Gold do IPEAData
+### Produtos Gold econômicos do IPEAData
 
 Os produtos ficam em:
 
 ```text
 data/gold/ipea/
 ```
-
-São gerados em CSV e Parquet.
 
 #### `ipca_brasil_por_ano`
 
@@ -423,9 +445,7 @@ A variação acumulada é calculada por:
 ÷ indice de dezembro do ano anterior - 1) × 100
 ```
 
-Quando o ano possui 12 meses, o status é `completo`. Quando possui entre 1 e 11 meses, o status é `parcial`.
-
-O primeiro ano disponível pode ter a variação acumulada nula por não existir dezembro do ano anterior na série.
+Quando o ano possui 12 meses, o status é `completo`. Quando possui de 1 a 11 meses, o status é `parcial`.
 
 #### `pib_real_variacao_interanual_trimestral`
 
@@ -442,32 +462,71 @@ status_periodo
 
 Cada linha representa um trimestre. A série não é somada nem transformada em PIB anual monetário.
 
-Exemplo:
+### Produtos Gold previdenciários do IPEAData
+
+O módulo `ipea_previdencia_gold.py` combina as três séries mensais do RGPS.
+
+São produzidos:
 
 ```text
-data/gold/ipea/
-├── ipca_brasil_por_ano.csv
-├── ipca_brasil_por_ano.parquet
-├── pib_real_variacao_interanual_trimestral.csv
-└── pib_real_variacao_interanual_trimestral.parquet
+data/gold/ipea/rgps_fluxo_financeiro_por_mes.csv
+data/gold/ipea/rgps_fluxo_financeiro_por_mes.parquet
+data/gold/ipea/rgps_fluxo_financeiro_por_ano.csv
+data/gold/ipea/rgps_fluxo_financeiro_por_ano.parquet
 ```
+
+#### `rgps_fluxo_financeiro_por_mes`
+
+Principais campos:
+
+```text
+periodo
+exercicio
+mes
+arrecadacao_liquida
+beneficios_previdenciarios
+resultado_primario_oficial
+resultado_primario_calculado
+diferenca_resultado
+diferenca_relativa_percentual
+unidade
+status_periodo
+status_conciliacao
+```
+
+#### `rgps_fluxo_financeiro_por_ano`
+
+Além dos totais anuais, registra:
+
+```text
+meses_arrecadacao_disponiveis
+meses_beneficios_disponiveis
+meses_resultado_disponiveis
+meses_comuns_disponiveis
+primeiro_mes_disponivel
+ultimo_mes_disponivel
+status_periodo
+status_conciliacao
+```
+
+Os valores monetários desses produtos são expressos em reais.
 
 ### Produtos Gold do SIOP
 
-Os produtos consolidados ficam em:
+Os produtos ficam em:
 
 ```text
 data/gold/siop/
 ```
 
-São produzidos:
+#### Consolidados anuais
 
 ```text
-data/gold/siop/loa_total_por_ano.csv
-data/gold/siop/loa_previdencia_publica_por_ano.csv
+loa_total_por_ano.csv
+loa_previdencia_publica_por_ano.csv
 ```
 
-Os dois arquivos possuem a mesma estrutura básica:
+Os dois arquivos possuem a estrutura básica:
 
 ```text
 fonte
@@ -480,56 +539,203 @@ valor_pago
 coletado_em
 ```
 
-#### `loa_total_por_ano.csv`
+`loa_total_por_ano` representa a soma de todos os registros da LOA do exercício.
 
-Contém uma linha por exercício.
+`loa_previdencia_publica_por_ano` representa a soma dos registros classificados na função `09 - Previdência Social`.
 
-Cada linha representa a soma de todos os registros da LOA do respectivo exercício, sem recorte por função, órgão, programa ou outra dimensão.
+#### Detalhamento da Previdência Federal
 
-#### `loa_previdencia_publica_por_ano.csv`
+Também são produzidos:
 
-Contém uma linha por exercício.
+```text
+previdencia_federal_por_subfuncao_ano.csv
+previdencia_federal_por_subfuncao_ano.parquet
+previdencia_federal_por_acao_ano.csv
+previdencia_federal_por_acao_ano.parquet
+previdencia_federal_componentes_por_ano.csv
+previdencia_federal_componentes_por_ano.parquet
+previdencia_federal_validacao_por_ano.csv
+previdencia_federal_validacao_por_ano.parquet
+```
 
-Cada linha representa a soma dos registros classificados na função:
+`previdencia_federal_por_subfuncao_ano` agrega a função 09 por exercício e subfunção.
+
+`previdencia_federal_por_acao_ano` agrega a função 09 por exercício, órgão, unidade orçamentária, subfunção, programa e ação.
+
+`previdencia_federal_componentes_por_ano` organiza componentes previdenciários mapeados, incluindo:
+
+- núcleo dos benefícios do RGPS;
+- compensação previdenciária;
+- ressarcimentos extraordinários mapeados;
+- aposentadorias e pensões civis da União;
+- pensões militares mapeadas;
+- encargos previdenciários especiais;
+- contribuição patronal da União ao RPPS;
+- resíduos classificados como `outros_funcao_09`.
+
+`previdencia_federal_validacao_por_ano` verifica se o total original da função 09 é reproduzido pelas agregações por subfunção e por ação.
+
+Na validação de julho de 2026, os 12 exercícios de 2015 a 2026 apresentaram:
+
+```text
+status_validacao = validado
+```
+
+As diferenças entre o total da função 09 e as somas detalhadas ficaram em zero para valores empenhados, liquidados e pagos.
+
+## Critério do recorte da função 09
+
+O recorte de Previdência Pública considera todas as linhas da LOA classificadas na função:
 
 ```text
 09 - Previdencia Social
 ```
 
-## Critério do recorte de Previdência Pública
+O filtro não se limita às subfunções 271, 272, 273 e 274. Essas são subfunções diretamente associadas à Previdência, mas a função 09 também pode conter registros em outras subfunções administrativas, de controle, compensação ou encargos especiais.
 
-O recorte considera todas as linhas da LOA classificadas na função 09.
+Portanto, todas as linhas classificadas na função 09 são incluídas, independentemente do órgão, unidade orçamentária, programa, ação, plano orçamentário, natureza da despesa, fonte de recursos ou outra dimensão.
 
-As subfunções associadas são:
+Não são incluídas linhas de outras funções apenas porque nomes de órgãos, programas ou ações contêm expressões como `INSS`, `previdência`, `aposentadoria` ou `pensão`.
 
-| Código | Descrição |
-|---|---|
-| 271 | Previdência Básica |
-| 272 | Previdência do Regime Estatutário |
-| 273 | Previdência Complementar |
-| 274 | Previdência Especial |
+Esse critério evita decisões baseadas somente em palavras e torna o recorte reproduzível entre exercícios.
 
-Todas as linhas classificadas na função 09 são incluídas, independentemente do órgão, unidade orçamentária, programa, ação, plano orçamentário, natureza da despesa, fonte de recursos ou outra categoria.
-
-Não são incluídas linhas de outras funções apenas porque o nome do órgão, programa ou ação contém expressões como `INSS`, `previdência`, `aposentadoria` ou `pensão`.
-
-Esse critério evita decisões baseadas apenas em palavras e torna o recorte reproduzível entre os exercícios.
-
-A explicação metodológica completa fica registrada em:
+A explicação metodológica complementar fica registrada em:
 
 ```text
 docs/LEGENDA_PREVIDENCIA_PUBLICA.md
 ```
 
+## Mapeamento das ações previdenciárias do SIOP
+
+O mapeamento usa o código da ação e o exercício, evitando depender apenas da descrição textual.
+
+### Núcleo dos benefícios do RGPS
+
+| Período | Ações consideradas |
+|---|---|
+| 2015 a 2021 | `0E81` Benefícios Previdenciários Urbanos + `0E82` Benefícios Previdenciários Rurais |
+| 2022 em diante | `00SJ` Benefícios Previdenciários |
+
+### Outros componentes mapeados
+
+| Código | Componente |
+|---|---|
+| `009W` | Compensação previdenciária |
+| `00XK` | Ressarcimentos extraordinários mapeados |
+| `0181` | Aposentadorias e pensões civis da União |
+| `0179` | Pensões militares mapeadas |
+| `09HB` | Contribuição patronal da União ao RPPS |
+
+Também são agrupadas ações específicas relacionadas a encargos previdenciários especiais. O componente residual permanece identificado como `outros_funcao_09`, sem receber classificação automática indevida.
+
+## Comparação entre IPEAData e SIOP
+
+A comparação anual é gerada em:
+
+```text
+data/gold/comparacoes/
+├── ipea_siop_previdencia_federal_por_ano.csv
+└── ipea_siop_previdencia_federal_por_ano.parquet
+```
+
+O produto compara o fluxo financeiro do RGPS no IPEAData com a execução orçamentária previdenciária mapeada no SIOP.
+
+A comparação principal utiliza:
+
+```text
+IPEAData:
+beneficios previdenciarios do RGPS
+
+SIOP:
+beneficios do RGPS
++
+compensacao previdenciaria
+no estagio valor pago
+```
+
+O produto também mantém comparações auxiliares com valores empenhados, liquidados e pagos, além de recortes mais amplos da função 09.
+
+Principais campos:
+
+```text
+ipea_arrecadacao_liquida
+ipea_beneficios_previdenciarios
+ipea_resultado_primario_oficial
+ipea_resultado_primario_calculado
+siop_rgps_beneficios_nucleo_pago
+siop_rgps_compensacao_previdenciaria_pago
+siop_rgps_beneficios_com_compensacao_pago
+siop_rpps_uniao_civis_aposentadorias_pensoes_pago
+siop_pensoes_militares_mapeadas_pago
+siop_funcao_09_pago
+siop_outros_funcao_09_pago
+diferenca_siop_rgps_com_compensacao_pago_menos_ipea
+cobertura_siop_rgps_com_compensacao_pago_percentual
+status_comparabilidade
+observacao_metodologica
+```
+
+Os status de comparabilidade são:
+
+```text
+dados_insuficientes
+periodo_parcial
+parcialmente_comparavel
+```
+
+A classificação `parcialmente_comparavel` é usada porque as fontes não representam exatamente o mesmo conceito:
+
+- o IPEAData apresenta fluxo financeiro do RGPS;
+- o SIOP apresenta execução orçamentária federal;
+- os estágios de empenho, liquidação e pagamento possuem significados distintos;
+- podem existir sentenças judiciais, compensações, ajustes de agentes pagadores e restos a pagar com reconhecimento diferente entre as fontes.
+
+Na validação dos anos completos de 2015 a 2025, o recorte principal do SIOP correspondeu a aproximadamente 87,84% a 94,64% dos benefícios informados pelo IPEAData, com média aproximada de 91,38%.
+
+Esses percentuais representam cobertura metodológica do recorte, não uma auditoria contábil nem uma medida automática de erro.
+
+O exercício de 2026 deve ser tratado como parcial enquanto as fontes apresentarem datas de corte diferentes.
+
+## Scripts auxiliares
+
+### `scripts/gerar_comparacao_previdencia.py`
+
+Reconstrói os produtos previdenciários do SIOP e a comparação com o IPEAData usando dados já existentes nas camadas `silver` e `gold`, sem depender de nova consulta às APIs.
+
+Execução:
+
+```bash
+PYTHONPATH=src python scripts/gerar_comparacao_previdencia.py
+```
+
+### `scripts/inventariar_siop_previdencia_acoes.py`
+
+Analisa o produto anual por ação e gera arquivos auxiliares em `outputs`:
+
+```text
+outputs/
+├── siop_previdencia_acoes_inventario.csv
+├── siop_previdencia_acoes_por_ano.csv
+└── siop_previdencia_acoes_nomes_divergentes.csv
+```
+
+Execução:
+
+```bash
+PYTHONPATH=src python scripts/inventariar_siop_previdencia_acoes.py
+```
+
+Esses arquivos auxiliam a revisão do mapeamento das ações, mas não substituem os produtos permanentes da camada `gold`.
+
 ## Principais módulos do código
 
 ### `scripts/run_etl.py`
 
-Ponto de entrada para execução pelo terminal.
+Ponto de entrada para execução do pipeline pelo terminal.
 
 ### `src/observatorio_etl/cli.py`
 
-Define os comandos da interface de linha de comando.
+Define os comandos e argumentos da interface de linha de comando.
 
 ### `src/observatorio_etl/config.py`
 
@@ -537,7 +743,7 @@ Lê e valida o arquivo `config/sources.json`.
 
 ### `src/observatorio_etl/http_client.py`
 
-Centraliza as requisições HTTP e as políticas de tentativa.
+Centraliza requisições HTTP e políticas de tentativa.
 
 ### `src/observatorio_etl/sidra.py`
 
@@ -568,15 +774,21 @@ Também padroniza:
 - trimestre;
 - código territorial;
 - unidade;
+- multiplicador;
+- fator multiplicador;
 - valor original;
 - valor numérico.
 
 ### `src/observatorio_etl/ipea_gold.py`
 
-Constrói os produtos Gold do IPEAData:
+Constrói os produtos Gold econômicos do IPEAData:
 
 - IPCA anual derivado do número-índice mensal;
 - variação real interanual do PIB por trimestre.
+
+### `src/observatorio_etl/ipea_previdencia_gold.py`
+
+Constrói os produtos mensais e anuais do fluxo financeiro do RGPS.
 
 ### `src/observatorio_etl/siop.py`
 
@@ -586,17 +798,25 @@ Entre suas responsabilidades estão:
 
 1. validar os parâmetros da consulta;
 2. consultar um exercício por vez;
-3. repetir a tentativa em falhas temporárias;
+3. repetir tentativas em falhas temporárias;
 4. padronizar as colunas;
 5. converter valores monetários;
-6. preservar as dimensões da LOA;
+6. preservar dimensões da LOA;
 7. construir o total anual;
 8. filtrar a função 09;
 9. construir o recorte anual da Previdência Pública.
 
+### `src/observatorio_etl/siop_previdencia_gold.py`
+
+Constrói os detalhamentos por subfunção e ação, os componentes previdenciários mapeados e a validação interna da função 09.
+
+### `src/observatorio_etl/previdencia_comparacoes.py`
+
+Constrói a comparação anual entre o fluxo financeiro do RGPS no IPEAData e os componentes da execução orçamentária do SIOP.
+
 ### `src/observatorio_etl/runner.py`
 
-Coordena a execução do ETL.
+Coordena a execução do pipeline.
 
 O módulo:
 
@@ -605,11 +825,12 @@ O módulo:
 3. chama o coletor correspondente;
 4. salva os dados na camada `bronze`;
 5. transforma e salva os dados na camada `silver`;
-6. gera os produtos Gold do IBGE;
-7. gera os produtos Gold do IPEAData;
-8. gera os consolidados do SIOP;
-9. atualiza o catálogo de séries;
-10. gera as séries consolidadas quando todas as fontes são executadas.
+6. gera as séries consolidadas;
+7. gera os produtos Gold do SIOP;
+8. gera os produtos Gold do IBGE;
+9. gera os produtos Gold do IPEAData;
+10. gera a comparação previdenciária quando as fontes necessárias estão disponíveis;
+11. atualiza o catálogo de séries.
 
 ### `src/observatorio_etl/paths.py`
 
@@ -662,16 +883,18 @@ orcamentobr
 
 ## Execução
 
+Os exemplos abaixo consideram a execução a partir da raiz de `pipeline_estruturado`.
+
 ### Listar as fontes
 
 ```bash
-python scripts/run_etl.py list-sources
+PYTHONPATH=src python scripts/run_etl.py list-sources
 ```
 
 ### Executar todas as fontes
 
 ```bash
-python scripts/run_etl.py run
+PYTHONPATH=src python scripts/run_etl.py run
 ```
 
 A execução completa pode levar mais tempo por causa das consultas anuais do SIOP.
@@ -679,7 +902,7 @@ A execução completa pode levar mais tempo por causa das consultas anuais do SI
 ### Executar uma fonte específica
 
 ```bash
-python scripts/run_etl.py run \
+PYTHONPATH=src python scripts/run_etl.py run \
   --source ipea_ipca_indice_mensal
 ```
 
@@ -688,33 +911,31 @@ python scripts/run_etl.py run \
 O parâmetro `--source` pode ser repetido:
 
 ```bash
-python scripts/run_etl.py run \
-  --source ipea_ipca_indice_mensal \
-  --source ipea_pib_real_trimestral
+PYTHONPATH=src python scripts/run_etl.py run \
+  --source ipea_rgps_arrecadacao_liquida_mensal \
+  --source ipea_rgps_beneficios_previdenciarios_mensal \
+  --source ipea_rgps_resultado_primario_mensal
 ```
 
-Outro exemplo:
+Quando apenas algumas fontes são executadas, os produtos que dependem de outras fontes podem não ser reconstruídos. Para testar o pipeline de ponta a ponta, execute todas as fontes sem o parâmetro `--source`.
 
-```bash
-python scripts/run_etl.py run \
-  --source pnad_condicao_trabalho_brasil \
-  --source pnad_taxa_desocupacao_brasil
-```
+## Fluxo da execução completa
 
-## Fluxo da execução
-
-Quando o comando `run` é executado, o pipeline:
+Quando o comando `run` é executado sem filtro, o pipeline:
 
 1. lê `config/sources.json`;
-2. seleciona todas as fontes ou apenas as fontes informadas;
+2. seleciona todas as fontes cadastradas;
 3. identifica o tipo de cada fonte;
 4. realiza a coleta;
-5. salva os dados originais na camada `bronze`;
-6. padroniza os dados;
+5. salva os dados próximos ao formato original na camada `bronze`;
+6. padroniza, tipa e enriquece os dados;
 7. salva CSV e Parquet na camada `silver`;
-8. gera produtos Gold específicos;
-9. atualiza `catalogo_series.csv`;
-10. gera `series_consolidadas` quando todas as fontes são processadas.
+8. gera as séries consolidadas;
+9. gera produtos Gold específicos do IBGE, IPEAData e SIOP;
+10. gera a comparação previdenciária IPEAData × SIOP;
+11. atualiza `catalogo_series.csv`.
+
+Esse fluxo comprova as etapas de extração, transformação e carregamento. As transformações não se limitam à limpeza: incluem regras de negócio, conversão de unidades, agregação temporal, classificação de períodos, mapeamento orçamentário, validação e reconciliação entre fontes.
 
 ## Como adicionar uma nova fonte
 
@@ -747,7 +968,7 @@ config/sources.json
 
 O parâmetro `gold_builder` identifica o construtor usado na consolidação anual do IBGE.
 
-### Exemplo IPEAData
+### Exemplo IPEAData econômico
 
 ```json
 {
@@ -756,6 +977,18 @@ O parâmetro `gold_builder` identifica o construtor usado na consolidação anua
   "source": "ipea",
   "theme": "inflacao",
   "series_code": "PRECOS12_IPCA12"
+}
+```
+
+### Exemplo IPEAData previdenciário
+
+```json
+{
+  "name": "ipea_rgps_arrecadacao_liquida_mensal",
+  "type": "ipeadata",
+  "source": "ipea",
+  "theme": "previdencia_rgps",
+  "series_code": "MPAS12_ARRLIQ12"
 }
 ```
 
@@ -814,7 +1047,7 @@ O parâmetro `gold_builder` identifica o construtor usado na consolidação anua
 Depois de editar o arquivo:
 
 ```bash
-python scripts/run_etl.py list-sources
+PYTHONPATH=src python scripts/run_etl.py list-sources
 ```
 
 Em seguida, execute a fonte cadastrada ou o pipeline completo.
@@ -833,9 +1066,64 @@ As validações atuais incluem:
 - comparação entre quantidade e percentual de contribuintes;
 - preservação de anos sem dados como nulos;
 - identificação de períodos completos, parciais e indisponíveis;
-- verificação do recorte funcional da Previdência no SIOP.
+- preservação do resultado oficial do RGPS;
+- cálculo independente do resultado previdenciário;
+- registro da diferença entre resultado oficial e calculado;
+- verificação do recorte funcional da Previdência no SIOP;
+- reconciliação do total da função 09 com suas subfunções;
+- reconciliação do total da função 09 com suas ações;
+- classificação da comparabilidade entre IPEAData e SIOP;
+- identificação de exercícios com período parcial.
 
-As validações ajudam a identificar problemas técnicos e diferenças metodológicas, mas não substituem a leitura da documentação oficial de cada fonte.
+As validações ajudam a identificar problemas técnicos e diferenças metodológicas, mas não substituem a documentação oficial de cada fonte.
+
+## Teste de execução de ponta a ponta
+
+Para comprovar que todas as camadas podem ser recriadas, remova apenas os artefatos gerados, preservando código, configuração e ambiente virtual.
+
+Exemplo de limpeza:
+
+```bash
+for diretorio in data/bronze data/silver data/gold outputs; do
+  if [ -d "$diretorio" ]; then
+    find "$diretorio" \
+      -type f \
+      ! -name ".gitkeep" \
+      -delete
+
+    find "$diretorio" \
+      -depth \
+      -mindepth 1 \
+      -type d \
+      -empty \
+      -delete
+  fi
+done
+
+mkdir -p data/bronze data/silver data/gold outputs
+```
+
+Depois, execute:
+
+```bash
+mkdir -p logs
+set -o pipefail
+
+PYTHONPATH=src python scripts/run_etl.py run \
+  2>&1 \
+  | tee "logs/etl_completa_$(date +%Y%m%d_%H%M%S).log"
+```
+
+O teste é considerado aprovado quando:
+
+- Bronze, Silver e Gold são recriadas;
+- nenhum arquivo obrigatório fica vazio;
+- `series_consolidadas.csv` e `series_consolidadas.parquet` são gravados;
+- os produtos previdenciários do IPEAData são gerados;
+- os produtos detalhados do SIOP são gerados;
+- os 12 exercícios do SIOP aparecem como `validado`;
+- a comparação IPEAData × SIOP é criada;
+- o catálogo de séries é atualizado.
 
 ## Possibilidades de análise
 
@@ -852,11 +1140,32 @@ Os produtos Gold permitem construir análises sobre:
 - crescimento real trimestral do PIB;
 - evolução da LOA;
 - evolução do orçamento relacionado à Previdência;
-- participação da Previdência no orçamento;
+- composição da função 09 por subfunção e ação;
+- arrecadação líquida do RGPS;
+- benefícios previdenciários do RGPS;
+- resultado previdenciário oficial e recalculado;
+- aposentadorias e pensões civis da União;
+- pensões militares mapeadas;
+- compensação previdenciária;
+- participação de componentes previdenciários na função 09;
+- cobertura do IPEAData pelo recorte orçamentário do SIOP;
 - valores orçamentários corrigidos pela inflação;
-- relações entre emprego, contribuição, demografia e orçamento público.
+- benefícios e resultado previdenciário como proporção do PIB;
+- relações entre emprego, contribuição, informalidade, demografia e orçamento público.
 
-As comparações entre fontes devem respeitar a granularidade e a unidade de cada indicador.
+As comparações devem respeitar a granularidade, unidade, estágio contábil, cobertura institucional e período de cada indicador.
+
+## Achados já reproduzidos pelo pipeline
+
+Com base nos dados completos de 2015 a 2025, o pipeline permitiu observar que:
+
+- a arrecadação líquida nominal do RGPS passou de aproximadamente R$ 350,3 bilhões para R$ 709,7 bilhões;
+- os benefícios previdenciários nominais passaram de aproximadamente R$ 436,1 bilhões para R$ 1,033 trilhão;
+- o resultado primário oficial passou de aproximadamente -R$ 85,8 bilhões para -R$ 317,2 bilhões;
+- o recorte principal do SIOP cobriu, em média, aproximadamente 91,38% do fluxo anual de benefícios do IPEAData;
+- a proximidade entre totais agregados não demonstra equivalência de conceitos, pois a função 09 contém componentes além do RGPS.
+
+Esses valores são nominais e refletem a coleta validada em julho de 2026. Novas execuções podem alterar exercícios ainda sujeitos a revisão ou atualização.
 
 ## Situação atual
 
@@ -866,15 +1175,20 @@ Nesta versão, o pipeline já permite:
 - executar todas as fontes;
 - executar uma ou várias fontes específicas;
 - consultar o IBGE e a PNAD pelo SIDRA;
-- consultar séries do IPEAData;
+- consultar séries econômicas e previdenciárias do IPEAData;
 - consultar a LOA completa do SIOP;
-- preservar os retornos originais;
+- preservar retornos e metadados próximos ao formato original;
 - gerar arquivos tratados em CSV e Parquet;
 - consolidar indicadores anuais do IBGE e da PNAD;
-- gerar produtos mensais, trimestrais e anuais do IPEAData;
+- gerar produtos econômicos mensais, trimestrais e anuais do IPEAData;
+- gerar o fluxo financeiro mensal e anual do RGPS;
 - gerar o total anual da LOA;
-- gerar o recorte anual da Previdência Pública;
-- registrar status de disponibilidade;
+- gerar o recorte anual da função 09;
+- detalhar a Previdência Federal por subfunção e ação;
+- mapear componentes do RGPS, RPPS federal e encargos especiais;
+- validar as agregações internas do SIOP;
+- comparar IPEAData e SIOP com classificação metodológica;
+- registrar status de disponibilidade e comparabilidade;
 - manter um catálogo das séries executadas;
 - produzir uma base adequada para análises e futura carga em banco de dados.
 
@@ -882,19 +1196,20 @@ Nesta versão, o pipeline já permite:
 
 Entre os próximos desenvolvimentos estão:
 
-- criar tabelas de comparação entre IBGE, IPEAData e SIOP;
-- produzir um painel anual integrado;
-- criar regras automáticas de auditoria e inconsistências;
+- separar comandos de extração, transformação e construção da Gold;
+- permitir reconstruir Silver diretamente da Bronze;
+- permitir reconstruir Gold diretamente da Silver sem nova coleta;
+- criar um painel anual integrado;
+- produzir gráficos e dashboards;
+- calcular indicadores corrigidos pelo IPCA;
+- relacionar Previdência, PIB, população e mercado de trabalho;
+- ampliar o mapeamento e a documentação das ações previdenciárias;
+- incorporar RPPS estaduais e municipais quando houver fonte adequada;
+- adicionar aposentadorias, pensões e auxílios individualizados quando houver séries metodologicamente válidas;
+- criar testes automatizados;
+- ampliar os logs e relatórios de auditoria;
 - incorporar a camada Gold em banco de dados;
-- criar notebooks analíticos;
-- desenvolver visualizações e dashboards;
-- adicionar testes automatizados;
-- ampliar a documentação das variáveis;
-- adicionar novas fontes públicas;
-- estudar o uso de microdados da PNAD;
-- avaliar outras fontes orçamentárias;
-- criar logs mais detalhados;
-- reduzir o tempo de consultas mais pesadas.
+- avaliar novas fontes públicas e microdados.
 
 ## Observações sobre os dados
 
@@ -905,15 +1220,16 @@ O exercício de 2026 ainda está em andamento.
 Por isso:
 
 - valores do SIOP representam o acumulado disponível no momento da coleta;
-- algumas séries anuais podem estar parciais;
-- indicadores com meses futuros permanecem nulos;
-- o status do período deve ser consultado antes de realizar comparações.
+- o IPEAData previdenciário pode possuir apenas parte dos meses do ano;
+- algumas séries anuais permanecem parciais;
+- indicadores com períodos futuros permanecem nulos;
+- comparações entre fontes com datas de corte diferentes recebem status de período parcial.
 
 ### IPEAData e IBGE
 
 Algumas séries disseminadas pelo IPEAData têm origem no próprio IBGE.
 
-O IPEAData funciona, nesses casos, como plataforma de disseminação. Portanto, diferenças entre produtos do IBGE e do IPEAData podem resultar de:
+O IPEAData funciona, nesses casos, como plataforma de disseminação. Diferenças entre produtos podem resultar de:
 
 - periodicidade;
 - metodologia de agregação;
@@ -921,6 +1237,12 @@ O IPEAData funciona, nesses casos, como plataforma de disseminação. Portanto, 
 - revisão da série;
 - arredondamento;
 - recorte temporal.
+
+### IPEAData e SIOP
+
+O IPEAData e o SIOP não devem ser comparados como se representassem a mesma contabilidade.
+
+O IPEAData apresenta fluxo financeiro do RGPS. O SIOP apresenta execução orçamentária e diferencia empenho, liquidação e pagamento. A comparação produzida pelo pipeline é analítica e metodológica, não uma certificação contábil.
 
 ### Certificado do SIOP
 
@@ -934,7 +1256,7 @@ foi usada porque o endpoint do SIOP apresentou falha de validação do certifica
 
 Essa configuração deve permanecer restrita à consulta do SIOP.
 
-### Preservação da camada bronze
+### Preservação da camada Bronze
 
 Os dados da camada `bronze` devem ser preservados sempre que possível.
 
@@ -944,4 +1266,4 @@ Alterações, filtros, padronizações e consolidações devem ocorrer nas camad
 
 O projeto continua em desenvolvimento.
 
-A arquitetura atual já permite ampliar as fontes e criar produtos analíticos sem misturar dados brutos, dados tratados e resultados consolidados. As próximas etapas deverão concentrar-se no cruzamento entre fontes, na auditoria automática e na disponibilização dos produtos Gold em banco de dados e ferramentas de visualização.
+A arquitetura atual já permite ampliar fontes e produtos analíticos sem misturar dados brutos, dados tratados e resultados consolidados. A implementação previdenciária acrescentou uma cadeia completa que vai da extração de séries e dados orçamentários até a validação, o mapeamento de componentes e a comparação metodológica entre fontes.

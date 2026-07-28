@@ -6,12 +6,18 @@ import pandas as pd
 from observatorio_etl.config import EtlConfig, SourceConfig
 from observatorio_etl.ibge import build_ibge_gold_outputs
 from observatorio_etl.ipea_gold import build_ipea_gold_outputs
+from observatorio_etl.ipea_previdencia_gold import (
+    build_ipea_previdencia_gold_outputs,
+)
 from observatorio_etl.ipeadata import (
     IpeaDataClient,
     ipea_to_long,
     ipea_values_to_dataframe,
 )
 from observatorio_etl.paths import ensure_dir
+from observatorio_etl.previdencia_comparacoes import (
+    build_previdencia_federal_comparison,
+)
 from observatorio_etl.sidra import (
     SidraClient,
     sidra_raw_to_dataframe,
@@ -23,6 +29,9 @@ from observatorio_etl.siop import (
     build_total_loa_row,
     prepare_siop_dataframe,
     validate_complete_loa_params,
+)
+from observatorio_etl.siop_previdencia_gold import (
+    build_siop_previdencia_gold_outputs,
 )
 from observatorio_etl.storage import write_dataframe, write_json
 
@@ -50,6 +59,8 @@ class EtlRunner:
         catalog_records: list[dict[str, object]] = []
         ibge_gold_requested = False
         ipea_gold_requested = False
+        ipea_previdencia_requested = False
+        siop_detail_gold_requested = False
 
         selected_sources = [
             source
@@ -67,6 +78,12 @@ class EtlRunner:
 
             if source.type == "ipeadata":
                 ipea_gold_requested = True
+
+                if source.theme == "previdencia_rgps":
+                    ipea_previdencia_requested = True
+
+            if source.type == "siop":
+                siop_detail_gold_requested = True
 
             if source_frame.empty:
                 catalog_records.append(
@@ -111,11 +128,17 @@ class EtlRunner:
                 )
             )
 
+        if siop_detail_gold_requested:
+            outputs["gold"].extend(self.write_siop_previdencia_detail_gold())
+
         if ibge_gold_requested:
             outputs["gold"].extend(self.write_ibge_gold())
 
         if ipea_gold_requested:
             outputs["gold"].extend(self.write_ipea_gold())
+
+        if siop_detail_gold_requested and ipea_previdencia_requested:
+            outputs["gold"].extend(self.write_previdencia_comparison())
 
         catalog_path = self.write_catalog(catalog_records)
         outputs["gold"].append(catalog_path)
@@ -393,12 +416,36 @@ class EtlRunner:
         self,
         frames: list[pd.DataFrame],
     ) -> list[Path]:
-        gold_frame = pd.concat(frames, ignore_index=True)
+        gold_frame = pd.concat(
+            frames,
+            ignore_index=True,
+        )
+
+        object_columns = gold_frame.select_dtypes(
+            include=["object"],
+        ).columns
+
+        for column in object_columns:
+            gold_frame[column] = gold_frame[column].astype(
+                "string",
+            )
+
         csv_path = self.root / "data" / "gold" / "series_consolidadas.csv"
         parquet_path = self.root / "data" / "gold" / "series_consolidadas.parquet"
-        write_dataframe(csv_path, gold_frame)
-        write_dataframe(parquet_path, gold_frame)
-        return [csv_path, parquet_path]
+
+        write_dataframe(
+            csv_path,
+            gold_frame,
+        )
+        write_dataframe(
+            parquet_path,
+            gold_frame,
+        )
+
+        return [
+            csv_path,
+            parquet_path,
+        ]
 
     def write_siop_gold(
         self,
@@ -425,6 +472,69 @@ class EtlRunner:
             previdencia_gold,
         )
         return [total_path, previdencia_path]
+
+    def write_siop_previdencia_detail_gold(self) -> list[Path]:
+        frames: dict[str, pd.DataFrame] = {}
+
+        for source in self.config.sources:
+            if source.type != "siop":
+                continue
+
+            exercicios = source.params.get("exercicios")
+
+            if exercicios is None:
+                exercicio = source.params.get("exercicio")
+                exercicios = [exercicio] if exercicio is not None else []
+
+            for exercicio in sorted(
+                {int(value) for value in exercicios if value is not None}
+            ):
+                silver_path = (
+                    self.root
+                    / "data"
+                    / "silver"
+                    / source.source
+                    / source.theme
+                    / f"siop_loa_completa_{exercicio}.parquet"
+                )
+                csv_path = silver_path.with_suffix(".csv")
+
+                if silver_path.exists():
+                    frame = pd.read_parquet(silver_path)
+                elif csv_path.exists():
+                    frame = pd.read_csv(
+                        csv_path,
+                        low_memory=False,
+                    )
+                else:
+                    continue
+
+                frames[f"{source.name}_{exercicio}"] = frame
+
+        if not frames:
+            return []
+
+        gold_outputs = build_siop_previdencia_gold_outputs(frames)
+        gold_dir = ensure_dir(self.root / "data" / "gold" / "siop")
+        paths: list[Path] = []
+
+        for filename, dataframe in gold_outputs.items():
+            csv_path = write_dataframe(
+                gold_dir / f"{filename}.csv",
+                dataframe,
+            )
+            parquet_path = write_dataframe(
+                gold_dir / f"{filename}.parquet",
+                dataframe,
+            )
+            paths.extend(
+                [
+                    csv_path,
+                    parquet_path,
+                ]
+            )
+
+        return paths
 
     def write_ibge_gold(self) -> list[Path]:
         frames: dict[str, pd.DataFrame] = {}
@@ -514,6 +624,9 @@ class EtlRunner:
             return []
 
         gold_outputs = build_ipea_gold_outputs(frames)
+        previdencia_outputs = build_ipea_previdencia_gold_outputs(frames)
+        gold_outputs.update(previdencia_outputs)
+
         gold_dir = ensure_dir(self.root / "data" / "gold" / "ipea")
         paths: list[Path] = []
 
@@ -529,6 +642,69 @@ class EtlRunner:
             paths.extend([csv_path, parquet_path])
 
         return paths
+
+    def write_previdencia_comparison(
+        self,
+    ) -> list[Path]:
+        ipea_path = (
+            self.root
+            / "data"
+            / "gold"
+            / "ipea"
+            / "rgps_fluxo_financeiro_por_ano.parquet"
+        )
+        ipea_csv_path = ipea_path.with_suffix(".csv")
+        siop_path = (
+            self.root
+            / "data"
+            / "gold"
+            / "siop"
+            / "previdencia_federal_componentes_por_ano.parquet"
+        )
+        siop_csv_path = siop_path.with_suffix(".csv")
+
+        if ipea_path.exists():
+            ipea_frame = pd.read_parquet(ipea_path)
+        elif ipea_csv_path.exists():
+            ipea_frame = pd.read_csv(
+                ipea_csv_path,
+                low_memory=False,
+            )
+        else:
+            return []
+
+        if siop_path.exists():
+            siop_frame = pd.read_parquet(siop_path)
+        elif siop_csv_path.exists():
+            siop_frame = pd.read_csv(
+                siop_csv_path,
+                low_memory=False,
+            )
+        else:
+            return []
+
+        comparison = build_previdencia_federal_comparison(
+            ipea_annual=ipea_frame,
+            siop_components=siop_frame,
+        )
+
+        if comparison.empty:
+            return []
+
+        gold_dir = ensure_dir(self.root / "data" / "gold" / "comparacoes")
+        csv_path = write_dataframe(
+            gold_dir / "ipea_siop_previdencia_federal_por_ano.csv",
+            comparison,
+        )
+        parquet_path = write_dataframe(
+            gold_dir / "ipea_siop_previdencia_federal_por_ano.parquet",
+            comparison,
+        )
+
+        return [
+            csv_path,
+            parquet_path,
+        ]
 
     def write_catalog(
         self,
