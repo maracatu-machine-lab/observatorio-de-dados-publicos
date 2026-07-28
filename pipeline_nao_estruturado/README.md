@@ -44,49 +44,6 @@ Este projeto propõe um pipeline computacional capaz de identificar automaticame
 
 ---
 
-# 🎯 Objetivos
-
-## Objetivo Geral
-
-Desenvolver uma infraestrutura computacional capaz de extrair, padronizar, armazenar e disponibilizar dados públicos do RGPS para aplicações em Ciência de Dados e Inteligência Artificial.
-
----
-
-## Objetivos Específicos
-
-- Automatizar o download dos relatórios oficiais.
-- Extrair tabelas utilizando Docling.
-- Corrigir inconsistências geradas pelo OCR.
-- Tratar Schema Drift automaticamente.
-- Classificar as tabelas utilizando regras de negócio.
-- Armazenar os dados em PostgreSQL.
-- Construir uma arquitetura Bronze → Prata → Gold.
-- Disponibilizar consultas SQL através do DuckDB.
-- Reconstruir séries históricas automaticamente.
-- Gerar bases estruturadas para modelos preditivos.
-
----
-
-# ✨ Principais Funcionalidades
-
-- Download automático dos relatórios oficiais
-- Extração automática utilizando Docling
-- Processamento OCR em dupla passagem
-- Correção automática de Schema Drift
-- Classificação determinística por regras de negócio
-- Identificação automática das tabelas relevantes
-- Padronização matemática das variáveis fiscais
-- Persistência em PostgreSQL
-- Arquitetura Bronze → Prata → Gold
-- Consultas SQL em memória utilizando DuckDB
-- Dashboard interativo em Streamlit
-- Exportação para CSV
-- Reconstrução automática de séries temporais
-- Governança completa dos documentos processados
-- Deduplicação utilizando Hash SHA-256
-
----
-
 # 🛠️ Tecnologias Utilizadas
 
 | Tecnologia | Finalidade |
