@@ -2,23 +2,26 @@
 
 Esta pasta contém o pipeline de dados em Python do **Observatório de Dados Públicos**. O projeto coleta, preserva, transforma, valida, consolida e compara dados públicos estruturados provenientes do IBGE/SIDRA, da PNAD Contínua, do IPEAData e do SIOP.
 
-A implementação segue uma arquitetura em camadas `bronze`, `silver` e `gold`. O fluxo combina características de ETL e ELT:
+A implementação segue uma arquitetura em camadas `bronze`, `silver` e `gold`, com persistência seletiva dos produtos analíticos em PostgreSQL. O banco pode ser executado em uma instância PostgreSQL convencional ou em um projeto Supabase compatível.
+
+O fluxo combina características de ETL e ELT:
 
 - os dados são extraídos das fontes públicas e preservados na camada `bronze`;
 - os registros são limpos, tipados e padronizados na camada `silver`;
-- as transformações analíticas, agregações e comparações são produzidas na camada `gold`.
+- as transformações analíticas, agregações e comparações são produzidas na camada `gold`;
+- produtos Gold selecionados são validados, enviados para tabelas `staging` e publicados de forma atômica no schema `gold` do PostgreSQL.
 
 ## Objetivo
 
-O objetivo do pipeline é oferecer um fluxo reproduzível e auditável para dados públicos estruturados.
+O objetivo do pipeline é oferecer um fluxo reproduzível, auditável e preparado para análise de dados públicos estruturados.
 
 ETL significa:
 
 - **Extract:** coletar dados, metadados e parâmetros em APIs, bibliotecas e serviços públicos;
-- **Transform:** limpar, converter, normalizar, enriquecer, agregar e validar os dados coletados;
-- **Load:** salvar os resultados em formatos adequados para consulta, análise e integração.
+- **Transform:** limpar, converter, normalizar, enriquecer, agregar, comparar e validar os dados coletados;
+- **Load:** salvar os resultados em CSV e Parquet e, para produtos selecionados, carregá-los em PostgreSQL.
 
-As três camadas principais são:
+As três camadas de arquivos são:
 
 ```text
 data/bronze
@@ -29,6 +32,18 @@ data/gold
 - A camada `bronze` preserva os retornos próximos ao formato original.
 - A camada `silver` contém dados tratados e padronizados.
 - A camada `gold` contém tabelas analíticas, indicadores, reconciliações e comparações entre fontes.
+
+A persistência PostgreSQL acrescenta os schemas:
+
+```text
+controle
+staging
+bronze
+silver
+gold
+```
+
+Nesta etapa do projeto, os schemas `controle`, `staging` e `gold` possuem uso operacional. Os schemas `bronze` e `silver` foram reservados para futuras cargas dessas camadas no banco.
 
 ## Fontes integradas
 
@@ -145,6 +160,12 @@ valor pago
 pipeline_estruturado/
 ├── config/
 │   └── sources.json
+├── database/
+│   └── migrations/
+│       ├── 001_create_schemas.sql
+│       ├── 002_create_control_tables.sql
+│       ├── 003_create_gold_previdencia_tables.sql
+│       └── 004_create_gold_ibge_tables.sql
 ├── data/
 │   ├── bronze/
 │   │   ├── ibge/
@@ -173,14 +194,21 @@ pipeline_estruturado/
 ├── notebooks/
 ├── outputs/
 ├── scripts/
+│   ├── carregar_gold_postgres.py
+│   ├── executar_migrations.py
 │   ├── gerar_comparacao_previdencia.py
+│   ├── inspecionar_gold_ibge_postgres.py
+│   ├── inspecionar_gold_postgres.py
 │   ├── inventariar_siop_previdencia_acoes.py
-│   └── run_etl.py
+│   ├── run_etl.py
+│   └── testar_conexao_postgres.py
 ├── src/
 │   └── observatorio_etl/
 │       ├── __init__.py
 │       ├── cli.py
 │       ├── config.py
+│       ├── database.py
+│       ├── database_loader.py
 │       ├── http_client.py
 │       ├── ibge.py
 │       ├── ipea_gold.py
@@ -193,12 +221,13 @@ pipeline_estruturado/
 │       ├── siop.py
 │       ├── siop_previdencia_gold.py
 │       └── storage.py
+├── .env
 ├── requirements.txt
 ├── pyproject.toml
 └── README.md
 ```
 
-Os arquivos efetivamente presentes podem variar conforme o estágio de desenvolvimento. Os diretórios `data`, `logs` e `outputs` armazenam artefatos de execução e não fazem parte do código-fonte principal.
+O arquivo `.env` contém configuração local e não deve ser versionado. Os arquivos efetivamente presentes podem variar conforme o estágio de desenvolvimento. Os diretórios `data`, `logs` e `outputs` armazenam artefatos de execução e não fazem parte do código-fonte principal.
 
 ## Configuração das fontes
 
@@ -696,13 +725,209 @@ Esses percentuais representam cobertura metodológica do recorte, não uma audit
 
 O exercício de 2026 deve ser tratado como parcial enquanto as fontes apresentarem datas de corte diferentes.
 
+## Persistência PostgreSQL e Supabase
+
+O pipeline possui carga direta dos produtos Gold selecionados em PostgreSQL. A implementação foi validada com uma instância Supabase por meio da string de conexão PostgreSQL, sem uso da API REST do Supabase.
+
+### Configuração da conexão
+
+Crie o arquivo local:
+
+```text
+.env
+```
+
+Exemplo:
+
+```dotenv
+DATABASE_URL=postgresql://USUARIO:SENHA@HOST:PORTA/BANCO?sslmode=require
+```
+
+A URL real não deve ser incluída no README, em commits, mensagens de erro compartilhadas ou arquivos de exemplo versionados. O `.env` deve permanecer ignorado pelo Git.
+
+A leitura da configuração é feita por:
+
+```text
+src/observatorio_etl/database.py
+```
+
+O módulo carrega explicitamente o `.env` localizado na raiz de `pipeline_estruturado`, valida a presença de `DATABASE_URL` e disponibiliza um gerenciador de conexão baseado em `psycopg`.
+
+### Schemas do banco
+
+As migrations criam:
+
+| Schema | Finalidade atual |
+|---|---|
+| `controle` | Execuções, cargas e migrations aplicadas |
+| `staging` | Preparação e validação antes da publicação |
+| `gold` | Produtos analíticos publicados |
+| `bronze` | Reservado para evolução futura |
+| `silver` | Reservado para evolução futura |
+
+As tabelas de controle são:
+
+```text
+controle.migracao
+controle.etl_execucao
+controle.etl_carga
+```
+
+`controle.migracao` registra nome, hash e duração de cada migration. Uma migration já aplicada não deve ser editada. Mudanças posteriores devem ser realizadas em um novo arquivo numerado.
+
+`controle.etl_execucao` registra a operação geral. `controle.etl_carga` registra cada dataset, arquivo de origem, SHA-256, quantidade de linhas, tabela de destino, status e eventuais mensagens de erro.
+
+### Migrations
+
+As migrations são executadas em ordem numérica:
+
+```text
+database/migrations/001_create_schemas.sql
+database/migrations/002_create_control_tables.sql
+database/migrations/003_create_gold_previdencia_tables.sql
+database/migrations/004_create_gold_ibge_tables.sql
+```
+
+Execução:
+
+```bash
+PYTHONPATH=src python scripts/executar_migrations.py
+```
+
+O executor:
+
+- cria a tabela de controle de migrations quando necessário;
+- calcula o SHA-256 de cada arquivo SQL;
+- ignora migrations já aplicadas e inalteradas;
+- interrompe o processo se uma migration aplicada tiver sido modificada;
+- executa cada nova migration em transação.
+
+### Produtos Gold persistidos
+
+A carga atual publica 11 datasets:
+
+| Dataset do carregador | Tabela PostgreSQL |
+|---|---|
+| `rgps_fluxo_financeiro_ano` | `gold.rgps_fluxo_financeiro_ano` |
+| `siop_previdencia_componentes_ano` | `gold.siop_previdencia_componentes_ano` |
+| `siop_previdencia_validacao_ano` | `gold.siop_previdencia_validacao_ano` |
+| `comparacao_ipea_siop_previdencia_ano` | `gold.comparacao_ipea_siop_previdencia_ano` |
+| `ibge_populacao_ano` | `gold.ibge_populacao_ano` |
+| `ibge_pib_nominal_ano` | `gold.ibge_pib_nominal_ano` |
+| `ibge_ipca_ano` | `gold.ibge_ipca_ano` |
+| `pnad_estrutura_etaria_ano` | `gold.pnad_estrutura_etaria_ano` |
+| `pnad_mercado_trabalho_ano` | `gold.pnad_mercado_trabalho_ano` |
+| `pnad_contribuicao_previdenciaria_ano` | `gold.pnad_contribuicao_previdenciaria_ano` |
+| `ibge_nucleo_anual` | `gold.ibge_nucleo_anual` |
+
+Cada tabela possui uma correspondente em `staging`.
+
+Na carga validada em julho de 2026, os 11 produtos totalizaram 135 registros. Essa quantidade pode mudar em novas coletas conforme as fontes publiquem exercícios ou períodos adicionais.
+
+### Estratégia de carga
+
+O módulo:
+
+```text
+src/observatorio_etl/database_loader.py
+```
+
+executa as seguintes etapas:
+
+1. localiza os 11 arquivos Parquet configurados;
+2. consulta a estrutura das tabelas PostgreSQL;
+3. valida colunas, ordem, tipos, nulabilidade, exercícios e duplicidades;
+4. calcula o SHA-256 de cada arquivo;
+5. registra a execução e as cargas em `controle`;
+6. converte valores para os tipos PostgreSQL, incluindo `NUMERIC`, `BIGINT` e `TIMESTAMPTZ`;
+7. limpa e carrega as tabelas `staging`;
+8. valida quantidade, exercícios e `carga_id`;
+9. substitui integralmente as tabelas `gold`;
+10. valida o resultado publicado;
+11. conclui os registros de controle.
+
+A publicação dos 11 datasets ocorre em uma única transação. Se qualquer etapa falhar, a alteração das tabelas de dados é revertida e a execução é registrada como erro em uma transação separada.
+
+A estratégia é de substituição integral, não de acréscimo. Reexecutar a mesma carga não duplica exercícios.
+
+### Testar a conexão
+
+```bash
+PYTHONPATH=src python scripts/testar_conexao_postgres.py
+```
+
+### Carregar produtos Gold já existentes
+
+```bash
+PYTHONPATH=src python scripts/carregar_gold_postgres.py
+```
+
+O mesmo carregamento pode ser solicitado pelo CLI principal:
+
+```bash
+PYTHONPATH=src python scripts/run_etl.py load-gold-postgres
+```
+
+Esses comandos usam os arquivos Gold existentes e não realizam nova consulta às APIs.
+
+### Executar o pipeline e carregar o PostgreSQL
+
+```bash
+PYTHONPATH=src python scripts/run_etl.py run --load-postgres
+```
+
+Nesse modo, o pipeline primeiro conclui a coleta e a geração local de Bronze, Silver e Gold. Somente depois inicia a carga PostgreSQL.
+
+A opção `--load-postgres` exige uma execução completa e não pode ser combinada com `--source`. Essa restrição evita publicar uma mistura de produtos recém-gerados com outros arquivos Gold de uma execução anterior.
+
+### Inspeções usadas para definir as tabelas
+
+Os scripts abaixo analisam estrutura, tipos, nulos, exercícios, duplicidades e hashes dos Parquets:
+
+```bash
+PYTHONPATH=src python scripts/inspecionar_gold_postgres.py
+PYTHONPATH=src python scripts/inspecionar_gold_ibge_postgres.py
+```
+
+Os relatórios são gravados em `outputs` e servem como apoio para definição e auditoria das migrations.
+
 ## Scripts auxiliares
+
+### `scripts/executar_migrations.py`
+
+Aplica as migrations SQL do diretório `database/migrations` e registra hash, data e duração em `controle.migracao`.
+
+```bash
+PYTHONPATH=src python scripts/executar_migrations.py
+```
+
+### `scripts/testar_conexao_postgres.py`
+
+Testa a conexão configurada em `.env` e apresenta informações básicas do banco.
+
+```bash
+PYTHONPATH=src python scripts/testar_conexao_postgres.py
+```
+
+### `scripts/carregar_gold_postgres.py`
+
+Carrega os 11 produtos Gold configurados nas tabelas PostgreSQL.
+
+```bash
+PYTHONPATH=src python scripts/carregar_gold_postgres.py
+```
+
+### `scripts/inspecionar_gold_postgres.py`
+
+Inspeciona os quatro produtos previdenciários persistidos no PostgreSQL e grava um relatório JSON em `outputs`.
+
+### `scripts/inspecionar_gold_ibge_postgres.py`
+
+Inspeciona os sete produtos do IBGE e da PNAD persistidos no PostgreSQL e grava um relatório JSON em `outputs`.
 
 ### `scripts/gerar_comparacao_previdencia.py`
 
 Reconstrói os produtos previdenciários do SIOP e a comparação com o IPEAData usando dados já existentes nas camadas `silver` e `gold`, sem depender de nova consulta às APIs.
-
-Execução:
 
 ```bash
 PYTHONPATH=src python scripts/gerar_comparacao_previdencia.py
@@ -735,11 +960,27 @@ Ponto de entrada para execução do pipeline pelo terminal.
 
 ### `src/observatorio_etl/cli.py`
 
-Define os comandos e argumentos da interface de linha de comando.
+Define os comandos e argumentos da interface de linha de comando:
+
+```text
+run
+list-sources
+load-gold-postgres
+```
+
+Também oferece a opção `--load-postgres` para a execução completa.
 
 ### `src/observatorio_etl/config.py`
 
 Lê e valida o arquivo `config/sources.json`.
+
+### `src/observatorio_etl/database.py`
+
+Carrega a configuração local, valida `DATABASE_URL`, abre conexões PostgreSQL e controla `commit`, `rollback` e fechamento das conexões.
+
+### `src/observatorio_etl/database_loader.py`
+
+Valida e carrega os produtos Gold selecionados em `staging` e `gold`, registra a execução em `controle` e preserva atomicidade, rastreabilidade e idempotência.
 
 ### `src/observatorio_etl/http_client.py`
 
@@ -832,6 +1073,8 @@ O módulo:
 10. gera a comparação previdenciária quando as fontes necessárias estão disponíveis;
 11. atualiza o catálogo de séries.
 
+A carga PostgreSQL é acionada pelo CLI somente depois que `runner.py` conclui a geração dos arquivos.
+
 ### `src/observatorio_etl/paths.py`
 
 Organiza os caminhos principais do projeto.
@@ -879,7 +1122,17 @@ requests
 pandas
 pyarrow
 orcamentobr
+psycopg[binary]
+python-dotenv
 ```
+
+Verifique o ambiente:
+
+```bash
+python -m pip check
+```
+
+Para usar PostgreSQL, crie o `.env` na raiz de `pipeline_estruturado` e defina `DATABASE_URL`. Não versione esse arquivo nem publique a credencial.
 
 ## Execução
 
@@ -917,7 +1170,41 @@ PYTHONPATH=src python scripts/run_etl.py run \
   --source ipea_rgps_resultado_primario_mensal
 ```
 
-Quando apenas algumas fontes são executadas, os produtos que dependem de outras fontes podem não ser reconstruídos. Para testar o pipeline de ponta a ponta, execute todas as fontes sem o parâmetro `--source`.
+Quando apenas algumas fontes são executadas, os produtos que dependem de outras fontes podem não ser reconstruídos. Para testar o pipeline de ponta a ponta, execute todas as fontes sem `--source`.
+
+### Testar a conexão PostgreSQL
+
+```bash
+PYTHONPATH=src python scripts/testar_conexao_postgres.py
+```
+
+### Aplicar migrations
+
+```bash
+PYTHONPATH=src python scripts/executar_migrations.py
+```
+
+### Carregar os produtos Gold existentes
+
+Pelo script específico:
+
+```bash
+PYTHONPATH=src python scripts/carregar_gold_postgres.py
+```
+
+Pelo CLI principal:
+
+```bash
+PYTHONPATH=src python scripts/run_etl.py load-gold-postgres
+```
+
+### Executar todas as fontes e atualizar o PostgreSQL
+
+```bash
+PYTHONPATH=src python scripts/run_etl.py run --load-postgres
+```
+
+Não combine `--load-postgres` com `--source`. O carregamento integrado foi limitado à execução completa para evitar a publicação de arquivos Gold produzidos em momentos diferentes.
 
 ## Fluxo da execução completa
 
@@ -934,6 +1221,28 @@ Quando o comando `run` é executado sem filtro, o pipeline:
 9. gera produtos Gold específicos do IBGE, IPEAData e SIOP;
 10. gera a comparação previdenciária IPEAData × SIOP;
 11. atualiza `catalogo_series.csv`.
+
+Quando `--load-postgres` é informado, o processo continua:
+
+12. prepara e valida os 11 Parquets selecionados;
+13. registra a execução em `controle`;
+14. carrega e valida as tabelas `staging`;
+15. substitui e valida as tabelas `gold`;
+16. conclui os registros de auditoria.
+
+```text
+Fontes públicas
+      ↓
+Bronze
+      ↓
+Silver
+      ↓
+Gold em CSV e Parquet
+      ↓
+Staging PostgreSQL
+      ↓
+Gold PostgreSQL
+```
 
 Esse fluxo comprova as etapas de extração, transformação e carregamento. As transformações não se limitam à limpeza: incluem regras de negócio, conversão de unidades, agregação temporal, classificação de períodos, mapeamento orçamentário, validação e reconciliação entre fontes.
 
@@ -1060,7 +1369,8 @@ As validações atuais incluem:
 - valores numéricos;
 - identificação de registros duplicados;
 - continuidade mensal e trimestral;
-- verificação de percentuais entre 0 e 100;
+- verificação de percentuais entre 0 e 100 quando o indicador representa uma proporção;
+- preservação de percentuais acima de 100 quando a métrica não deve ser limitada artificialmente, como determinadas coberturas entre fontes;
 - verificação de quantidades não negativas;
 - consistência entre força de trabalho, ocupados e desocupados;
 - comparação entre quantidade e percentual de contribuintes;
@@ -1073,13 +1383,21 @@ As validações atuais incluem:
 - reconciliação do total da função 09 com suas subfunções;
 - reconciliação do total da função 09 com suas ações;
 - classificação da comparabilidade entre IPEAData e SIOP;
-- identificação de exercícios com período parcial.
+- identificação de exercícios com período parcial;
+- correspondência exata entre as colunas do Parquet e da tabela PostgreSQL;
+- respeito à nulabilidade definida no banco;
+- conversão controlada para `NUMERIC`, inteiros, texto, datas e timestamps;
+- unicidade do exercício em cada produto anual;
+- validação da quantidade de linhas e do intervalo de exercícios em `staging` e `gold`;
+- verificação de que cada linha publicada pertence ao `carga_id` esperado;
+- comparação por SHA-256 entre arquivo de origem e registro de controle;
+- prevenção contra alteração de migrations já aplicadas.
 
 As validações ajudam a identificar problemas técnicos e diferenças metodológicas, mas não substituem a documentação oficial de cada fonte.
 
 ## Teste de execução de ponta a ponta
 
-Para comprovar que todas as camadas podem ser recriadas, remova apenas os artefatos gerados, preservando código, configuração e ambiente virtual.
+Para comprovar que todas as camadas podem ser recriadas, remova apenas os artefatos gerados, preservando código, migrations, configuração, `.env` e ambiente virtual.
 
 Exemplo de limpeza:
 
@@ -1103,13 +1421,19 @@ done
 mkdir -p data/bronze data/silver data/gold outputs
 ```
 
-Depois, execute:
+Aplique ou confira as migrations:
+
+```bash
+PYTHONPATH=src python scripts/executar_migrations.py
+```
+
+Depois execute:
 
 ```bash
 mkdir -p logs
 set -o pipefail
 
-PYTHONPATH=src python scripts/run_etl.py run \
+PYTHONPATH=src python scripts/run_etl.py run --load-postgres \
   2>&1 \
   | tee "logs/etl_completa_$(date +%Y%m%d_%H%M%S).log"
 ```
@@ -1123,7 +1447,11 @@ O teste é considerado aprovado quando:
 - os produtos detalhados do SIOP são gerados;
 - os 12 exercícios do SIOP aparecem como `validado`;
 - a comparação IPEAData × SIOP é criada;
-- o catálogo de séries é atualizado.
+- o catálogo de séries é atualizado;
+- a carga PostgreSQL termina como `concluida`;
+- 11 cargas são registradas em `controle.etl_carga`;
+- as tabelas Gold mantêm exercícios únicos e não duplicam registros em reexecuções;
+- a carga validada apresenta 135 registros enquanto os períodos das fontes permanecerem iguais aos descritos neste README.
 
 ## Possibilidades de análise
 
@@ -1190,7 +1518,14 @@ Nesta versão, o pipeline já permite:
 - comparar IPEAData e SIOP com classificação metodológica;
 - registrar status de disponibilidade e comparabilidade;
 - manter um catálogo das séries executadas;
-- produzir uma base adequada para análises e futura carga em banco de dados.
+- criar e controlar schemas e tabelas PostgreSQL por migrations;
+- testar a conexão PostgreSQL configurada em `.env`;
+- carregar 11 produtos Gold em `staging` e `gold`;
+- registrar execuções, hashes, contagens, status e erros em tabelas de controle;
+- executar a carga PostgreSQL de forma independente ou integrada ao pipeline;
+- substituir os produtos publicados sem duplicar exercícios.
+
+Na validação realizada em julho de 2026, a carga ampliada publicou 11 datasets e 135 registros.
 
 ## Próximas etapas
 
@@ -1199,6 +1534,11 @@ Entre os próximos desenvolvimentos estão:
 - separar comandos de extração, transformação e construção da Gold;
 - permitir reconstruir Silver diretamente da Bronze;
 - permitir reconstruir Gold diretamente da Silver sem nova coleta;
+- criar testes automatizados para migrations, conversões e cargas;
+- ampliar os logs e relatórios de auditoria;
+- criar views analíticas e consultas padronizadas no PostgreSQL;
+- avaliar índices adicionais conforme o padrão real de consulta;
+- definir políticas de acesso e exposição segura das tabelas no Supabase;
 - criar um painel anual integrado;
 - produzir gráficos e dashboards;
 - calcular indicadores corrigidos pelo IPCA;
@@ -1206,9 +1546,7 @@ Entre os próximos desenvolvimentos estão:
 - ampliar o mapeamento e a documentação das ações previdenciárias;
 - incorporar RPPS estaduais e municipais quando houver fonte adequada;
 - adicionar aposentadorias, pensões e auxílios individualizados quando houver séries metodologicamente válidas;
-- criar testes automatizados;
-- ampliar os logs e relatórios de auditoria;
-- incorporar a camada Gold em banco de dados;
+- avaliar a persistência das camadas Bronze e Silver no banco;
 - avaliar novas fontes públicas e microdados.
 
 ## Observações sobre os dados
@@ -1267,3 +1605,5 @@ Alterações, filtros, padronizações e consolidações devem ocorrer nas camad
 O projeto continua em desenvolvimento.
 
 A arquitetura atual já permite ampliar fontes e produtos analíticos sem misturar dados brutos, dados tratados e resultados consolidados. A implementação previdenciária acrescentou uma cadeia completa que vai da extração de séries e dados orçamentários até a validação, o mapeamento de componentes e a comparação metodológica entre fontes.
+
+A persistência PostgreSQL acrescenta uma etapa operacional auditável após a geração da Gold. Os produtos selecionados passam por inspeção, migrations versionadas, carga em `staging`, validação, publicação atômica em `gold` e registro em tabelas de controle. Essa estrutura prepara o Observatório para consultas, aplicações e painéis sem abandonar os arquivos CSV e Parquet usados na rastreabilidade e no reprocessamento.
