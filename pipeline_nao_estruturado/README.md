@@ -28,7 +28,7 @@ O pipeline foi projetado para lidar automaticamente com mudanças de layout, alt
 
 # 🎯 Problema de Pesquisa
 
-Os relatórios mensais do RGPS são disponibilizados exclusivamente em formato PDF.
+Os relatórios mensais do RGPS são disponibilizados em formatos de apresentação e texto (como PDF e PPTX).
 
 Embora contenham informações essenciais para estudos econômicos e atuariais, esses documentos apresentam diversas dificuldades para extração automática, entre elas:
 
@@ -140,6 +140,16 @@ Caso nenhuma correspondência seja encontrada, a tabela é descartada automatica
 
 ---
 
+### 🗺️ Extração Orientada a Metadados (Metadata-Driven) e Fallback Híbrido
+
+Para garantir 100% de precisão matemática na extração e evitar falsos positivos causados pelo ruído do OCR, o pipeline implementa uma arquitetura híbrida de busca:
+
+1. **Mapeamento Explícito (Excel):** O sistema consome uma planilha de controle (`mapeamento.xlsx`) que indica em qual página exata cada tabela está localizada em cada mês/ano, acelerando o processamento.
+2. **Prova Real:** A tabela encontrada na página mapeada é submetida ao Gabarito de Regras. Se as palavras-chave baterem, ela é aprovada.
+3. **Fallback Automático (Plano B):** Se o mapeamento humano falhar (ex: erro de digitação na planilha) ou a página estiver em branco, o sistema não quebra. Ele emite um alerta e aciona automaticamente a varredura completa do documento em busca da tabela perdida.
+
+---
+
 ### 🔒 Deduplicação
 
 Todos os documentos recebem um hash SHA-256.
@@ -154,33 +164,26 @@ Caso um documento já tenha sido processado anteriormente, sua ingestão é igno
 flowchart TD
 
 A[urls_alvo.txt]
+A2[mapeamento.xlsx]
 
-A --> B[Download do PDF]
+A --> B[Download do Documento]
+B --> C{É PDF ou PPTX?}
+C --> D[Hash SHA-256]
 
-B --> C[Hash SHA-256]
+A2 --> G
+D --> E[Docling OCR / Parsing]
 
-C --> D[Docling]
+E --> F[Leitura de Páginas]
+F --> G{Cruzamento com Mapeamento Excel}
 
-D --> E[Texto Original]
+G -->|Página Correta e Validada| H[Tratamento Pandas]
+G -->|Página Errada / Não Mapeada| I[Varredura Completa e Gabarito]
+I --> H
 
-D --> F[Modelo Visual OCR]
-
-E --> G[Fusão Inteligente]
-
-F --> G
-
-G --> H[Tratamento Pandas]
-
-H --> I[Schema Drift]
-
-I --> J[Classificação por Regras]
-
-J --> K[(Bronze)]
-
-J --> L[(Prata)]
-
-L --> M[(Gold)]
-
+H --> J[Schema Drift & Filtro Temporal]
+J --> K[(Camada Bronze)]
+J --> L[(Camada Prata)]
+L --> M[(Camada Gold)]
 M --> N[Dashboard Streamlit]
 
 ```
@@ -266,15 +269,11 @@ observatorio-de-dados-publicos/
 │   ├── app.py                   # Dashboard Streamlit
 │   ├── database.py              # Inicialização do banco
 │   ├── ingestao_automatica.py   # Pipeline principal
-│   │
-│   ├── classificacao/
-│   ├── extracao/
-│   ├── processamento/
-│   ├── database/
-│   ├── utils/
-│   └── config/
+│   ├── limpar_banco.py          # Script de reset (Drop Tables)
+...
 │
-├── urls_alvo.txt
+├── urls_alvo.txt                # Lista de PDFs e PPTXs
+├── mapeamento.xlsx              # Matriz de controle de páginas (Metadata-Driven)
 ├── requirements.txt
 ├── .env
 ├── README.md
@@ -418,30 +417,15 @@ O script criará automaticamente todas as tabelas necessárias.
 
 ---
 
-# 📥 Configuração das URLs
+# 📥 Configuração de Ingestão e Metadados
 
-Na raiz do projeto, crie o arquivo
+Na raiz do projeto, você deve gerenciar dois arquivos de entrada:
 
-```text
-urls_alvo.txt
-```
+**1. `urls_alvo.txt`**
+Cada linha deve conter um link direto para o documento oficial (suporta `.pdf` e `.pptx`). Linhas iniciadas por `#` são ignoradas.
 
-Cada linha deve conter um PDF oficial.
-
-Exemplo:
-
-```text
-# Relatórios RGPS
-
-https://www.gov.br/arquivo1.pdf
-
-https://www.gov.br/arquivo2.pdf
-
-https://www.gov.br/arquivo3.pdf
-```
-
-Linhas iniciadas por `#` são ignoradas.
-
+**2. `mapeamento.xlsx`**
+Planilha de controle contendo os meses nas colunas (ex: `2026-03`) e as categorias nas linhas (ex: `1_Resultado_Total`). O cruzamento deve conter o número da página onde a tabela se encontra para otimizar o processamento.
 ---
 
 # ▶️ Executando a Ingestão
@@ -532,20 +516,16 @@ O pipeline foi desenvolvido seguindo princípios de **Engenharia de Dados**, **r
 
 O fluxo computacional pode ser resumido nas seguintes etapas:
 
-1. Leitura automática da lista de URLs (`urls_alvo.txt`);
-2. Download dos relatórios oficiais em PDF;
-3. Geração do hash SHA-256 para identificação única do documento;
-4. Verificação de duplicidade na Camada Bronze;
-5. Extração da estrutura tabular utilizando Docling;
-6. Processamento em dupla passagem (texto nativo + modelo visual);
-7. Fusão inteligente dos resultados extraídos;
-8. Tratamento de inconsistências estruturais (Schema Drift);
-9. Classificação das tabelas por regras de negócio;
-10. Persistência dos metadados na Camada Bronze;
-11. Persistência dos dados estruturados na Camada Prata;
-12. Reconstrução automática das séries históricas na Camada Gold;
-13. Disponibilização dos dados através do dashboard Streamlit.
-
+1. Leitura automática da lista de documentos (`urls_alvo.txt`) e da planilha de controle (`mapeamento.xlsx`);
+2. Download dos relatórios (PDF ou PowerPoint) e identificação nativa da extensão;
+3. Geração do hash SHA-256 para evitar duplicidade na Camada Bronze;
+4. Extração da estrutura tabular utilizando Docling (dupla passagem para PDFs);
+5. **Cruzamento Híbrido:** Verificação da página mapeada no Excel contra a regra do Gabarito;
+6. Execução do Fallback automático de busca em caso de divergência humana;
+7. Tratamento de inconsistências estruturais (Schema Drift) e isolamento da variável mensal;
+8. Persistência dos metadados na Camada Bronze e JSONB na Camada Prata;
+9. Reconstrução cronológica automatizada das séries históricas na Camada Gold, com tratamento de transposição para categorias excepcionais (Tabela 10);
+10. Disponibilização dos dados através do dashboard interativo Streamlit.
 Essa abordagem garante rastreabilidade completa desde o documento original até a série histórica consolidada.
 
 ---
