@@ -237,25 +237,24 @@ Na próxima parte construiremos:
 
 ---
 
-# 📊 Categorias Mapeadas
+# 📊 Categorias Mapeadas (O Gabarito)
 
-O pipeline foi desenvolvido para identificar e classificar automaticamente as principais tabelas presentes nos relatórios mensais do RGPS.
+O pipeline foi desenvolvido para identificar, limpar e classificar automaticamente as **10 tabelas centrais** presentes nos relatórios mensais do RGPS. 
 
-Durante o processamento, cada tabela extraída é comparada contra um conjunto de **gabaritos (templates)** baseados em regras de negócio. Apenas as categorias conhecidas são persistidas no banco de dados; tabelas irrelevantes, como capas, índices, notas metodológicas e anexos, são descartadas.
+Durante o processamento, cada tabela extraída é comparada contra um conjunto de **gabaritos (templates)** baseados em regras de negócio. Apenas as categorias mapeadas abaixo são persistidas no banco de dados; tabelas irrelevantes, como capas, índices, notas metodológicas e anexos, são descartadas automaticamente.
 
-| ID | Categoria | Descrição |
-|----|-----------|-----------|
-| 1 | **Resultado_Total** | Resultado consolidado do RGPS (Arrecadação Líquida × Despesas com Benefícios). |
-| 2 | **Resultado_Urbano** | Resultado específico da Previdência Urbana. |
-| 3 | **Resultado_Rural** | Resultado específico da Previdência Rural. |
-| 4 | **Acumulado_12_Meses** | Indicadores acumulados dos últimos 12 meses. |
-| 5 | **Renuncias_Total** | Renúncias previdenciárias totais (MEI, Simples Nacional, Filantrópicas etc.). |
-| 6 | **Renuncias_Urbano** | Renúncias relacionadas ao regime urbano. |
-| 7 | **Renuncias_Rural** | Renúncias relacionadas ao regime rural. |
-| 8 | **Beneficios_Quantidade_Resumo** | Quantidade total de benefícios emitidos. |
-| 9 | **Beneficios_Quantidade_Detalhado** | Quantidade detalhada por tipo de benefício. |
-| 10 | **Beneficios_Faixa_Valor** | Distribuição dos benefícios por faixa salarial. |
-
+| ID | Categoria no Banco | Descrição dos Indicadores Contidos |
+| :--- | :--- | :--- |
+| **1** | `1_Resultado_Total` | Arrecadação Líquida e Despesa com Benefícios (Visão Consolidada). |
+| **2** | `2_Resultado_Urbano` | Arrecadação Líquida e Despesa com Benefícios (Visão Urbana). |
+| **3** | `3_Resultado_Rural` | Arrecadação Líquida e Despesa com Benefícios (Visão Rural). |
+| **4** | `4_Acumulado_12_Meses` | Visão consolidada dos resultados e despesas acumulados nos últimos 12 meses. |
+| **5** | `5_Renuncias_Total` | Impacto das Renúncias Previdenciárias (Simples Nacional, MEI, Filantrópicas, etc.) no resultado total. |
+| **6** | `6_Renuncias_Urbano` | Impacto das Renúncias Previdenciárias focado na arrecadação urbana. |
+| **7** | `7_Renuncias_Rural` | Impacto das Renúncias Previdenciárias focado na arrecadação rural (Funrural, Exportação, etc.). |
+| **8** | `8_Beneficios_Quantidade_Resumo` | Quantidade total de benefícios emitidos (Previdenciários + Acidentários vs. Assistenciais). |
+| **9** | `9_Beneficios_Quantidade_Detalhado` | Abertura detalhada da quantidade de benefícios (Aposentadorias, Auxílio-Doença, BPC, etc.). |
+| **10** | `10_Beneficios_Faixa_Valor` | Distribuição dos benefícios emitidos divididos por faixas de Salário Mínimo (<1 SM, 1 SM, etc.). *Possui tratamento especial de transposição e formatação na Camada Gold para reestruturação das linhas.* |
 ---
 
 # 🗂️ Estrutura do Projeto
