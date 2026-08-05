@@ -49,6 +49,154 @@ COMPARISON_COLUMNS = [
     "observacao_metodologica",
 ]
 
+CONSISTENCY_COLUMNS = [
+    "exercicio",
+    "indicador",
+    "fonte_referencia",
+    "fonte_comparada",
+    "valor_referencia",
+    "valor_comparado",
+    "diferenca_absoluta",
+    "divergencia_percentual",
+    "limite_percentual",
+    "alerta",
+    "status_consistencia",
+    "observacao",
+]
+
+
+CONSISTENCY_RULES = (
+    {
+        "indicador": "beneficios_previdenciarios_rgps",
+        "fonte_referencia": "IPEAData",
+        "fonte_comparada": "SIOP",
+        "coluna_referencia": "ipea_beneficios_previdenciarios",
+        "coluna_comparada": ("siop_rgps_beneficios_com_compensacao_pago"),
+    },
+)
+
+
+def numeric_or_none(value: Any) -> float | None:
+    """Converte um valor numérico e preserva ausências."""
+    converted = pd.to_numeric(
+        value,
+        errors="coerce",
+    )
+
+    if pd.isna(converted):
+        return None
+
+    return float(converted)
+
+
+def build_multisource_consistency(
+    comparison: pd.DataFrame,
+    threshold_percent: float = 10.0,
+) -> pd.DataFrame:
+    """
+    Avalia a consistência entre fontes comparáveis.
+
+    A divergência é calculada em relação à fonte de referência.
+    O alerta não é gerado para períodos parciais, dados ausentes
+    ou referência igual a zero.
+    """
+    if threshold_percent < 0:
+        raise ValueError("O limite percentual não pode ser negativo.")
+
+    if comparison.empty:
+        return pd.DataFrame(columns=CONSISTENCY_COLUMNS)
+
+    records: list[dict[str, Any]] = []
+
+    for rule in CONSISTENCY_RULES:
+        for _, row in comparison.iterrows():
+            reference = numeric_or_none(row.get(rule["coluna_referencia"]))
+            compared = numeric_or_none(row.get(rule["coluna_comparada"]))
+
+            period_status = str(row.get("ipea_status_periodo", "")).strip().casefold()
+
+            comparability_status = (
+                str(row.get("status_comparabilidade", "")).strip().casefold()
+            )
+
+            difference = None
+            divergence = None
+            alert = False
+
+            if reference is None or compared is None:
+                status = "dados_insuficientes"
+                observation = "Uma ou mais fontes não possuem valor para o exercício."
+
+            elif (
+                period_status != "completo" or comparability_status == "periodo_parcial"
+            ):
+                status = "nao_avaliado_periodo_parcial"
+                observation = (
+                    "O exercício possui período incompleto "
+                    "ou datas de corte não comparáveis."
+                )
+
+            elif reference == 0:
+                status = "nao_avaliado_referencia_zero"
+                observation = (
+                    "A divergência relativa não pode ser "
+                    "calculada porque a referência é zero."
+                )
+
+            else:
+                difference = compared - reference
+                divergence = abs(difference) / abs(reference) * 100
+                alert = divergence > threshold_percent
+
+                if alert:
+                    status = "alerta_divergencia"
+                    observation = (
+                        "Divergência superior ao limite definido para revisão."
+                    )
+                else:
+                    status = "dentro_do_limite"
+                    observation = "Divergência dentro do limite definido."
+
+            records.append(
+                {
+                    "exercicio": row.get("exercicio"),
+                    "indicador": rule["indicador"],
+                    "fonte_referencia": (rule["fonte_referencia"]),
+                    "fonte_comparada": (rule["fonte_comparada"]),
+                    "valor_referencia": reference,
+                    "valor_comparado": compared,
+                    "diferenca_absoluta": (
+                        round(difference, 2) if difference is not None else None
+                    ),
+                    "divergencia_percentual": (
+                        round(divergence, 6) if divergence is not None else None
+                    ),
+                    "limite_percentual": (threshold_percent),
+                    "alerta": alert,
+                    "status_consistencia": status,
+                    "observacao": observation,
+                }
+            )
+
+    result = pd.DataFrame(
+        records,
+        columns=CONSISTENCY_COLUMNS,
+    )
+
+    result["exercicio"] = pd.to_numeric(
+        result["exercicio"],
+        errors="coerce",
+    ).astype("Int64")
+
+    return result.sort_values(
+        [
+            "indicador",
+            "fonte_referencia",
+            "fonte_comparada",
+            "exercicio",
+        ]
+    ).reset_index(drop=True)
+
 
 def build_previdencia_federal_comparison(
     ipea_annual: pd.DataFrame,
