@@ -1,6 +1,6 @@
 # Pipeline Estruturado
 
-Esta pasta contém o pipeline de dados em Python do **Observatório de Dados Públicos**. O projeto coleta, preserva, transforma, valida, consolida e compara dados públicos estruturados provenientes do IBGE/SIDRA, da PNAD Contínua, do IPEAData e do SIOP.
+Esta pasta contém o pipeline de dados em Python do **Observatório de Dados Públicos**. O projeto coleta, preserva, transforma, valida, consolida e compara dados públicos estruturados provenientes do IBGE/SIDRA, da PNAD Contínua, do IPEAData e do SIOP. A implementação também gera um produto de consistência entre IPEAData e SIOP e registra alertas quando a divergência percentual entre exercícios comparáveis supera o limite operacional definido.
 
 A implementação segue uma arquitetura em camadas `bronze`, `silver` e `gold`, com persistência seletiva dos produtos analíticos em PostgreSQL. O banco pode ser executado em uma instância PostgreSQL convencional ou em um projeto Supabase compatível.
 
@@ -18,7 +18,7 @@ O objetivo do pipeline é oferecer um fluxo reproduzível, auditável e preparad
 ETL significa:
 
 - **Extract:** coletar dados, metadados e parâmetros em APIs, bibliotecas e serviços públicos;
-- **Transform:** limpar, converter, normalizar, enriquecer, agregar, comparar e validar os dados coletados;
+- **Transform:** limpar, converter, normalizar, enriquecer, agregar, comparar, validar e sinalizar divergências nos dados coletados;
 - **Load:** salvar os resultados em CSV e Parquet e, para produtos selecionados, carregá-los em PostgreSQL.
 
 As três camadas de arquivos são:
@@ -31,7 +31,7 @@ data/gold
 
 - A camada `bronze` preserva os retornos próximos ao formato original.
 - A camada `silver` contém dados tratados e padronizados.
-- A camada `gold` contém tabelas analíticas, indicadores, reconciliações e comparações entre fontes.
+- A camada `gold` contém tabelas analíticas, indicadores, reconciliações, comparações entre fontes e produtos de consistência.
 
 A persistência PostgreSQL acrescenta os schemas:
 
@@ -181,6 +181,10 @@ pipeline_estruturado/
 │   │       └── execucao_orcamentaria/
 │   └── gold/
 │       ├── comparacoes/
+│       │   ├── ipea_siop_previdencia_federal_por_ano.csv
+│       │   ├── ipea_siop_previdencia_federal_por_ano.parquet
+│       │   ├── consistencia_multifonte_previdencia_por_ano.csv
+│       │   └── consistencia_multifonte_previdencia_por_ano.parquet
 │       ├── ibge/
 │       ├── ipea/
 │       ├── siop/
@@ -657,19 +661,19 @@ O mapeamento usa o código da ação e o exercício, evitando depender apenas da
 
 Também são agrupadas ações específicas relacionadas a encargos previdenciários especiais. O componente residual permanece identificado como `outros_funcao_09`, sem receber classificação automática indevida.
 
-## Comparação entre IPEAData e SIOP
+## Comparação e consistência entre IPEAData e SIOP
 
-A comparação anual é gerada em:
+Os produtos anuais são gerados em:
 
 ```text
 data/gold/comparacoes/
 ├── ipea_siop_previdencia_federal_por_ano.csv
-└── ipea_siop_previdencia_federal_por_ano.parquet
+├── ipea_siop_previdencia_federal_por_ano.parquet
+├── consistencia_multifonte_previdencia_por_ano.csv
+└── consistencia_multifonte_previdencia_por_ano.parquet
 ```
 
-O produto compara o fluxo financeiro do RGPS no IPEAData com a execução orçamentária previdenciária mapeada no SIOP.
-
-A comparação principal utiliza:
+A comparação principal confronta os benefícios previdenciários do RGPS no IPEAData com a soma dos benefícios do RGPS e da compensação previdenciária no estágio pago do SIOP:
 
 ```text
 IPEAData:
@@ -682,9 +686,9 @@ compensacao previdenciaria
 no estagio valor pago
 ```
 
-O produto também mantém comparações auxiliares com valores empenhados, liquidados e pagos, além de recortes mais amplos da função 09.
+O produto de comparação também mantém recortes auxiliares com valores empenhados, liquidados e pagos, além de componentes mais amplos da função 09.
 
-Principais campos:
+Principais campos do produto de comparação:
 
 ```text
 ipea_arrecadacao_liquida
@@ -714,16 +718,73 @@ parcialmente_comparavel
 
 A classificação `parcialmente_comparavel` é usada porque as fontes não representam exatamente o mesmo conceito:
 
-- o IPEAData apresenta fluxo financeiro do RGPS;
-- o SIOP apresenta execução orçamentária federal;
-- os estágios de empenho, liquidação e pagamento possuem significados distintos;
-- podem existir sentenças judiciais, compensações, ajustes de agentes pagadores e restos a pagar com reconhecimento diferente entre as fontes.
+- o IPEAData apresenta o fluxo financeiro do RGPS;
+- o SIOP apresenta a execução orçamentária federal;
+- empenho, liquidação e pagamento possuem significados distintos;
+- sentenças judiciais, compensações, ajustes de agentes pagadores e restos a pagar podem ser reconhecidos de forma diferente entre as fontes.
+
+### Verificador de consistência e sistema de alerta
+
+O produto `consistencia_multifonte_previdencia_por_ano` registra, para cada exercício:
+
+```text
+exercicio
+indicador
+fonte_referencia
+fonte_comparada
+valor_referencia
+valor_comparado
+diferenca_absoluta
+divergencia_percentual
+limite_percentual
+alerta
+status_consistencia
+status_periodo_referencia
+status_comparabilidade
+observacao
+```
+
+A divergência percentual é calculada por:
+
+```text
+abs(valor_comparado - valor_referencia)
+---------------------------------------- × 100
+         abs(valor_referencia)
+```
+
+Nesta comparação, o IPEAData é usado como fonte de referência apenas para definir o denominador do cálculo. Isso não significa que ele seja considerado automaticamente mais correto que o SIOP.
+
+O limite operacional atual é de `10%`. Um alerta é registrado somente quando:
+
+```text
+divergencia_percentual > 10
+```
+
+O limite é uma regra exploratória de priorização para revisão e não um parâmetro normativo, contábil ou estatístico de validade das fontes.
+
+Os status do produto de consistência incluem:
+
+```text
+dentro_do_limite
+alerta_divergencia
+dados_insuficientes
+nao_avaliado_periodo_parcial
+nao_avaliado_referencia_zero
+```
+
+Períodos parciais, valores ausentes e referências iguais a zero não geram alerta. Na execução validada:
+
+- 2023 apresentou divergência de aproximadamente `12,16%`;
+- 2025 apresentou divergência de aproximadamente `10,26%`;
+- 2026 não foi avaliado por possuir período parcial e datas de corte distintas.
+
+Os alertas indicam necessidade de revisão metodológica. Eles não constituem evidência automática de erro em uma das fontes.
+
+Embora o pipeline integre SIDRA, PNAD Contínua, IPEAData e SIOP, a verificação comparativa com geração de alertas foi validada, nesta versão, para o par IPEAData × SIOP. As demais fontes permanecem submetidas às verificações estruturais, temporais e de completude específicas de cada dataset. A estrutura do produto permite incorporar novas regras quando houver fontes metodologicamente comparáveis.
 
 Na validação dos anos completos de 2015 a 2025, o recorte principal do SIOP correspondeu a aproximadamente 87,84% a 94,64% dos benefícios informados pelo IPEAData, com média aproximada de 91,38%.
 
-Esses percentuais representam cobertura metodológica do recorte, não uma auditoria contábil nem uma medida automática de erro.
-
-O exercício de 2026 deve ser tratado como parcial enquanto as fontes apresentarem datas de corte diferentes.
+Esses percentuais representam cobertura metodológica do recorte, não auditoria contábil nem medida automática de erro.
 
 ## Persistência PostgreSQL e Supabase
 
@@ -823,6 +884,8 @@ A carga atual publica 11 datasets:
 Cada tabela possui uma correspondente em `staging`.
 
 Na carga validada em julho de 2026, os 11 produtos totalizaram 135 registros. Essa quantidade pode mudar em novas coletas conforme as fontes publiquem exercícios ou períodos adicionais.
+
+O produto `consistencia_multifonte_previdencia_por_ano` é gravado localmente em CSV e Parquet, mas ainda não integra os 11 datasets publicados no PostgreSQL.
 
 ### Estratégia de carga
 
@@ -927,7 +990,16 @@ Inspeciona os sete produtos do IBGE e da PNAD persistidos no PostgreSQL e grava 
 
 ### `scripts/gerar_comparacao_previdencia.py`
 
-Reconstrói os produtos previdenciários do SIOP e a comparação com o IPEAData usando dados já existentes nas camadas `silver` e `gold`, sem depender de nova consulta às APIs.
+Reconstrói os produtos previdenciários do SIOP, a comparação anual com o IPEAData e o produto de consistência entre fontes usando dados já existentes nas camadas `silver` e `gold`, sem depender de nova consulta às APIs.
+
+O script:
+
+1. carrega os arquivos anuais do SIOP;
+2. reconstrói os produtos Gold previdenciários;
+3. gera a comparação IPEAData × SIOP;
+4. calcula a divergência percentual;
+5. grava o produto de consistência em CSV e Parquet;
+6. imprime os exercícios dentro do limite, os não avaliados e os alertas superiores a 10%.
 
 ```bash
 PYTHONPATH=src python scripts/gerar_comparacao_previdencia.py
@@ -1053,7 +1125,7 @@ Constrói os detalhamentos por subfunção e ação, os componentes previdenciá
 
 ### `src/observatorio_etl/previdencia_comparacoes.py`
 
-Constrói a comparação anual entre o fluxo financeiro do RGPS no IPEAData e os componentes da execução orçamentária do SIOP.
+Concentra as regras da comparação anual entre o fluxo financeiro do RGPS no IPEAData e os componentes da execução orçamentária do SIOP, incluindo valores, diferenças, coberturas e status de comparabilidade usados pelo produto de consistência.
 
 ### `src/observatorio_etl/runner.py`
 
@@ -1230,6 +1302,12 @@ Quando `--load-postgres` é informado, o processo continua:
 15. substitui e valida as tabelas `gold`;
 16. conclui os registros de auditoria.
 
+O produto de consistência e os alertas podem ser reconstruídos, sem nova coleta, após a geração das camadas locais:
+
+```bash
+PYTHONPATH=src python scripts/gerar_comparacao_previdencia.py
+```
+
 ```text
 Fontes públicas
       ↓
@@ -1238,13 +1316,17 @@ Bronze
 Silver
       ↓
 Gold em CSV e Parquet
+      ├── comparação IPEAData × SIOP
+      └── consistência e alertas
       ↓
 Staging PostgreSQL
       ↓
 Gold PostgreSQL
 ```
 
-Esse fluxo comprova as etapas de extração, transformação e carregamento. As transformações não se limitam à limpeza: incluem regras de negócio, conversão de unidades, agregação temporal, classificação de períodos, mapeamento orçamentário, validação e reconciliação entre fontes.
+O carregamento PostgreSQL permanece restrito aos 11 produtos configurados. O produto local de consistência ainda não é publicado no banco.
+
+Esse fluxo comprova as etapas de extração, transformação e carregamento. As transformações incluem regras de negócio, conversão de unidades, agregação temporal, classificação de períodos, mapeamento orçamentário, validação, reconciliação e sinalização de divergências entre fontes comparáveis.
 
 ## Como adicionar uma nova fonte
 
@@ -1384,6 +1466,11 @@ As validações atuais incluem:
 - reconciliação do total da função 09 com suas ações;
 - classificação da comparabilidade entre IPEAData e SIOP;
 - identificação de exercícios com período parcial;
+- cálculo da diferença absoluta entre IPEAData e SIOP;
+- cálculo da divergência percentual com o IPEAData como denominador de referência;
+- geração de alerta quando a divergência é estritamente superior a 10%;
+- exclusão de períodos parciais, valores ausentes e referências iguais a zero da geração de alertas;
+- registro do status e da observação metodológica de cada avaliação;
 - correspondência exata entre as colunas do Parquet e da tabela PostgreSQL;
 - respeito à nulabilidade definida no banco;
 - conversão controlada para `NUMERIC`, inteiros, texto, datas e timestamps;
@@ -1438,6 +1525,12 @@ PYTHONPATH=src python scripts/run_etl.py run --load-postgres \
   | tee "logs/etl_completa_$(date +%Y%m%d_%H%M%S).log"
 ```
 
+Reconstrua também a comparação e o produto de consistência:
+
+```bash
+PYTHONPATH=src python scripts/gerar_comparacao_previdencia.py
+```
+
 O teste é considerado aprovado quando:
 
 - Bronze, Silver e Gold são recriadas;
@@ -1447,6 +1540,9 @@ O teste é considerado aprovado quando:
 - os produtos detalhados do SIOP são gerados;
 - os 12 exercícios do SIOP aparecem como `validado`;
 - a comparação IPEAData × SIOP é criada;
+- `consistencia_multifonte_previdencia_por_ano.csv` e `.parquet` são gerados;
+- 2023 e 2025 aparecem como `alerta_divergencia`;
+- 2026 aparece como `nao_avaliado_periodo_parcial`;
 - o catálogo de séries é atualizado;
 - a carga PostgreSQL termina como `concluida`;
 - 11 cargas são registradas em `controle.etl_carga`;
@@ -1491,6 +1587,8 @@ Com base nos dados completos de 2015 a 2025, o pipeline permitiu observar que:
 - os benefícios previdenciários nominais passaram de aproximadamente R$ 436,1 bilhões para R$ 1,033 trilhão;
 - o resultado primário oficial passou de aproximadamente -R$ 85,8 bilhões para -R$ 317,2 bilhões;
 - o recorte principal do SIOP cobriu, em média, aproximadamente 91,38% do fluxo anual de benefícios do IPEAData;
+- o verificador registrou divergências de aproximadamente 12,16% em 2023 e 10,26% em 2025, acima do limite operacional de 10%;
+- o exercício de 2026 foi classificado como não avaliado no sistema de alerta por representar período parcial;
 - a proximidade entre totais agregados não demonstra equivalência de conceitos, pois a função 09 contém componentes além do RGPS.
 
 Esses valores são nominais e refletem a coleta validada em julho de 2026. Novas execuções podem alterar exercícios ainda sujeitos a revisão ou atualização.
@@ -1516,6 +1614,10 @@ Nesta versão, o pipeline já permite:
 - mapear componentes do RGPS, RPPS federal e encargos especiais;
 - validar as agregações internas do SIOP;
 - comparar IPEAData e SIOP com classificação metodológica;
+- gerar o produto anual de consistência entre IPEAData e SIOP;
+- calcular divergência absoluta e percentual entre as fontes;
+- registrar alertas para divergências superiores a 10%;
+- excluir períodos parciais, dados ausentes e referência igual a zero da geração de alertas;
 - registrar status de disponibilidade e comparabilidade;
 - manter um catálogo das séries executadas;
 - criar e controlar schemas e tabelas PostgreSQL por migrations;
@@ -1537,6 +1639,9 @@ Entre os próximos desenvolvimentos estão:
 - criar testes automatizados para migrations, conversões e cargas;
 - ampliar os logs e relatórios de auditoria;
 - criar views analíticas e consultas padronizadas no PostgreSQL;
+- integrar a geração do produto de consistência ao fluxo principal do `runner.py`;
+- avaliar a persistência do produto de consistência no PostgreSQL;
+- adicionar novas regras de comparação entre fontes metodologicamente compatíveis;
 - avaliar índices adicionais conforme o padrão real de consulta;
 - definir políticas de acesso e exposição segura das tabelas no Supabase;
 - criar um painel anual integrado;
@@ -1580,7 +1685,11 @@ O IPEAData funciona, nesses casos, como plataforma de disseminação. Diferença
 
 O IPEAData e o SIOP não devem ser comparados como se representassem a mesma contabilidade.
 
-O IPEAData apresenta fluxo financeiro do RGPS. O SIOP apresenta execução orçamentária e diferencia empenho, liquidação e pagamento. A comparação produzida pelo pipeline é analítica e metodológica, não uma certificação contábil.
+O IPEAData apresenta o fluxo financeiro do RGPS. O SIOP apresenta a execução orçamentária e diferencia empenho, liquidação e pagamento. A comparação produzida pelo pipeline é analítica e metodológica, não uma certificação contábil.
+
+No produto de consistência, o IPEAData é utilizado apenas como denominador de referência para o cálculo da divergência. O limite de 10% funciona como regra operacional exploratória para priorizar revisões e não determina, por si só, que uma fonte esteja correta ou incorreta.
+
+Os alertas devem ser interpretados em conjunto com cobertura, periodicidade, data de corte, estágio orçamentário e universo institucional. Exercícios parciais não são avaliados.
 
 ### Certificado do SIOP
 
@@ -1607,3 +1716,5 @@ O projeto continua em desenvolvimento.
 A arquitetura atual já permite ampliar fontes e produtos analíticos sem misturar dados brutos, dados tratados e resultados consolidados. A implementação previdenciária acrescentou uma cadeia completa que vai da extração de séries e dados orçamentários até a validação, o mapeamento de componentes e a comparação metodológica entre fontes.
 
 A persistência PostgreSQL acrescenta uma etapa operacional auditável após a geração da Gold. Os produtos selecionados passam por inspeção, migrations versionadas, carga em `staging`, validação, publicação atômica em `gold` e registro em tabelas de controle. Essa estrutura prepara o Observatório para consultas, aplicações e painéis sem abandonar os arquivos CSV e Parquet usados na rastreabilidade e no reprocessamento.
+
+A versão atual também produz uma tabela local de consistência entre IPEAData e SIOP, com cálculo de divergência, limite configurado, status de avaliação e alertas. A verificação foi validada para esse par de fontes e poderá ser ampliada quando novas comparações metodologicamente compatíveis forem definidas.
